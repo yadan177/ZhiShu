@@ -45,7 +45,9 @@ Canvas → Canvas Scaler
 **三种模式对比**：
 - `Constant Pixel Size`：UI 固定像素大小，**不适合多分辨率**
 - `Scale With Screen Size`：UI 整体缩放适配屏幕，**推荐** ✅
-- `Constant Physical Size`：UI 按物理尺寸显示（用于 AR）
+- `Constant Physical Size`：Screen Space 下按屏幕物理 DPI 显示（适用于需物理毫米尺度的触屏或部分手持 AR 屏幕叠加）
+
+> **XR（VR / MR）空间界面提示**：XR 头显应用通常使用 **World Space Canvas**（而非 Screen Space Overlay 或 `Constant Physical Size`），通过物理米制尺寸、舒适视距、`Dynamic Pixels Per Unit` / `Reference Pixels Per Unit` 与射线交互模块控制可读性；空间 UI 摆放、Yaw-only 生成、惰性跟随、防穿模与热区实现详见 [17 - XR 空间 UI 实现规则](./17-XR空间UI实现规则.md)；若项目已安装对应可选包，同步核对 `.agent-rules/xr-common/15-AI通用入口规则.md` 与 `.agent-rules/ui-design/其他规则/08-XR空间布局与摆放架构规范.md`。
 
 ### 1.3 嵌套 Canvas
 
@@ -61,7 +63,7 @@ Canvas 可以**嵌套**（在已有 Canvas 下创建子 Canvas）：
 - Canvas 内的 UI 变化**只 Rebuild 自身**（不影响父 Canvas）
 - 子 Canvas 太多会**增加 Draw Call**
 
-> **经验**：UI 数量 < 100 用单 Canvas；UI 数量 > 100 或需要分组更新才嵌套。
+> **实践原则**：拆分嵌套 Canvas 的核心依据是**动静分离**（把高频变化的血条/倒计时/动效与静态底板拆开），而不是按固定元素数量一刀切；是否拆分以 Profiler 中 `Canvas.BuildBatch` / `Canvas.SendWillRenderCanvases` 耗时与 Draw Call 的实测权衡为准。
 
 ## 2. RectTransform 锚点与轴心
 
@@ -128,11 +130,16 @@ Left: 0, Right: 0, Top: 0, Bottom: 0  // 边距
 - `(1, 1)` 右上角
 
 ```csharp
-// ❌ 错：进度条 Fill 用中心轴心（会导致宽度变化时左右都动）
-Image.fillAmount = 0.5f;  // Pivot = (0.5, 0.5) → 中心点不动，两边收缩
+// ✅ 通过修改尺寸/缩放实现进度条时，Pivot 决定固定锚边
+// Pivot = (0, 0.5) → 左边缘固定，调整 sizeDelta.x 或 localScale.x 时从左向右扩展
+m_barRect.pivot = new Vector2(0f, 0.5f);
 
-// ✅ 对：进度条 Fill 用左中轴心（宽度从左到右增加）
-Image.fillAmount = 0.5f;  // Pivot = (0, 0.5) → 左边缘固定，右边缘扩展
+// ✅ 若使用 Image.Type.Filled + fillAmount 实现进度条，
+// 填充方向由 fillMethod 与 fillOrigin 决定（而非 RectTransform.pivot）
+m_fillImage.type = Image.Type.Filled;
+m_fillImage.fillMethod = Image.FillMethod.Horizontal;
+m_fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
+m_fillImage.fillAmount = 0.5f;
 ```
 
 
@@ -144,12 +151,12 @@ Image.fillAmount = 0.5f;  // Pivot = (0, 0.5) → 左边缘固定，右边缘扩
 |------|-------|----------|
 | 用途 | 显示 Sprite（图集中的图） | 显示 Texture（任意贴图） |
 | 性能 | ✅ 可合批 | ❌ 不可合批 |
-| 支持类型 | Sprite / Texture2D | 任意 Texture（含 RenderTexture） |
+| 支持类型 | 仅 `Sprite` | 任意 `Texture`（含 `Texture2D` / `RenderTexture`） |
 
 **使用规则**：
 - 🔴 **UI 静态图用 Image**（图集 Sprite）
 - 🟡 **动态图（截图 / 视频 / RenderTexture）用 RawImage**
-- ❌ 不要用 Image 显示任意 Texture（破坏合批）
+- ❌ 不要为了临时动态贴图反复在运行时 `Sprite.Create` 给 Image 使用（破坏合批且易泄漏贴图/Sprite，应改用 RawImage 并明确生命周期）
 
 ```csharp
 // ✅ Image 显示图集 Sprite
@@ -176,11 +183,16 @@ public void SetScore(int score) { m_scoreText.text = $"Score: {score}"; }
 - 🟡 静态字体适合字符集明确且可在构建前收集的内容；动态、静态或混合 fallback 由本地化范围、包体和运行时成本决定。
 
 **自动换行 / 溢出**：
-- `Enable Word Wrapping Text` = true
+- 自动换行：Unity 2022 及更早版本使用 `enableWordWrapping = true`（Inspector 中 `Wrapping: Enabled`）；Unity 6（`com.unity.ugui` 2.0+）改用 `textWrappingMode = TextWrappingModes.Normal`
 - `Overflow Mode`：
-  - `Overflow`：超出就显示（不推荐）
-  - `Truncate`：超出显示 `…`（推荐）
-  - `Ellipsis`：超出生省略号
+  - `Overflow`：超出容器继续绘制（常规卡片/列表不推荐）
+  - `Truncate`：超出区域直接截断，不显示省略号
+  - `Ellipsis`：超出区域在末尾显示省略号 `…`（固定框体/单行标题常用）
+
+**组件文案解耦与防反复修改**：
+- 🔴 **严禁将普通按钮、标签与状态文字烘焙进 Sprite 切图**；文字必须保留在 `TMP_Text` 组件并支持运行时或集中表驱动替换。
+- 🔴 **通用 UI Prefab 禁止写死具体业务文案**：可复用的按钮、弹窗、空态、状态条 Prefab 应通过公开方法（如 `SetLabel(string)`）或绑定项目既有的本地化/文案表（如 Unity Localization Table、ScriptableObject 文案表或集中 C# 常量表）注入文本，避免同一业务词散落在几十个 Prefab 中导致二次改字漏改。
+- 🔴 **按钮与标签容器抗改字**：定宽按钮与单行标题明确配置 `Ellipsis` 或受控上下限的 `Auto Size`（设置合理 `Min/Max Font Size`）；随文案伸缩的按钮/徽章采用 `HorizontalLayoutGroup` + `Padding` + `ContentSizeFitter`（注意避免深层嵌套引发 §4.4 布局重建开销），确保文案加长不截断错位。
 
 ### 3.3 Button
 
@@ -224,6 +236,11 @@ private void OnEnable()
     m_soundToggle.onValueChanged.AddListener(OnSoundChanged);
 }
 
+private void OnDisable()
+{
+    m_soundToggle.onValueChanged.RemoveListener(OnSoundChanged);
+}
+
 private void OnSoundChanged(bool isOn)
 {
     AudioManager.Instance.SetMute(!isOn);
@@ -234,10 +251,28 @@ private void OnSoundChanged(bool isOn)
 
 ```csharp
 [SerializeField] private Slider m_volumeSlider;
-m_volumeSlider.minValue = 0f;
-m_volumeSlider.maxValue = 1f;
-m_volumeSlider.value = AudioManager.Instance.Volume;
-m_volumeSlider.onValueChanged.AddListener(v => AudioManager.Instance.SetVolume(v));
+
+private void Awake()
+{
+    m_volumeSlider.minValue = 0f;
+    m_volumeSlider.maxValue = 1f;
+}
+
+private void OnEnable()
+{
+    m_volumeSlider.SetValueWithoutNotify(AudioManager.Instance.Volume);
+    m_volumeSlider.onValueChanged.AddListener(OnVolumeChanged);
+}
+
+private void OnDisable()
+{
+    m_volumeSlider.onValueChanged.RemoveListener(OnVolumeChanged);
+}
+
+private void OnVolumeChanged(float value)
+{
+    AudioManager.Instance.SetVolume(value);
+}
 ```
 
 **Scrollbar**（滚动条）：
@@ -338,7 +373,7 @@ HorizontalLayoutGroup
 - 每次子项变化（如 ListView 滚动）都触发整棵 Layout 树 Rebuild
 
 **替代方案**：
-- 复杂列表用 **UI Toolkit**（比 UGUI Layout 快得多）
+- 超长或复杂列表在 UGUI 中采用**虚拟化循环 ScrollRect + 对象池复用可视项**（仅在项目已同时采用 UI Toolkit 时才跨体系评估）
 - 静态布局**直接设 RectTransform**（不用 Layout 组件）
 - 动态列表用对象池 + 手动设置 RectTransform
 
@@ -405,34 +440,38 @@ public class DraggableItem : MonoBehaviour, IBeginDragHandler, IDragHandler, IEn
 
     public void OnDrag(PointerEventData eventData)
     {
-        // 跟随鼠标移动
+        // 仅适用于 Screen Space - Overlay；
+        // Screen Space - Camera / World Space（或父级存在旋转缩放）应改用 RectTransformUtility.ScreenPointToLocalPointInRectangle
+        if (m_canvas == null || m_canvas.scaleFactor <= 0f) return;
         m_rectTransform.anchoredPosition += eventData.delta / m_canvas.scaleFactor;
     }
 }
 ```
 
-### 5.4 事件冒泡
+### 5.4 事件命中与层级传递
 
-UGUI 事件**从子节点向父节点冒泡**：
+UGUI 射线命中目标后，事件系统会从命中子节点**向上查找首个实现对应事件接口的对象**（`ExecuteEvents.GetEventHandler`）：
 
 ```text
-Button (子)
-└─ Image (父)
-    └─ Canvas (祖父)
-        → OnClick 触发顺序：Button → Image → Canvas
+Canvas (祖父)
+└─ Panel Image (父)
+    └─ Button (子，射线命中目标)
+        → 若 Button 自身实现了 IPointerClickHandler，则仅在 Button 上触发，不会自动继续向 Panel Image 冒泡；
+          若命中的是 Button 下未实现点击接口的子文本/图标，才会向上传递到 Button。
 ```
 
-**控制冒泡**：
-- `eventData.Use()` 标记事件已处理（阻止后续接收）
-- 父级 Image 默认 `Raycast Target = true`（会拦截点击）
+**控制交互穿透与阻挡**：
+- 🔴 纯展示子节点关闭 `raycastTarget = false`，减少无谓的射线检测
+- 🟡 `eventData.Use()` 仅置位 `eventData.used = true`，**并不会**阻断 UGUI 默认事件分发或改变已选中的事件处理器；若子节点处理后仍需父级响应，须显式调用 `ExecuteEvents.ExecuteHierarchy` 转发
+- 🟡 需临时屏蔽整组 UI 交互时，使用父级 `CanvasGroup.blocksRaycasts = false`
 
 ```csharp
 public class ChildButton : MonoBehaviour, IPointerClickHandler
 {
     public void OnPointerClick(PointerEventData eventData)
     {
-        // 处理点击
-        eventData.Use();  // 阻止冒泡到父级
+        // 仅当前命中的处理器触发；无需调用 eventData.Use() 来“阻止冒泡”
+        HandleClick();
     }
 }
 ```
@@ -478,81 +517,78 @@ m_iconImage.sprite = singleHealthSprite;
 
 **Sprite Atlas 设置**：
 1. `Assets → Create → Sprite Atlas`
-2. 把要打图集的 Sprite 拖入
-3. 勾选 `Include in Build`（运行时也用）
-4. 运行时调用 `SpriteAtlasManager.Register(atlas)` 加载
+2. 把要打图集的 Sprite 拖入 `Objects for Packing`
+3. 随包内置图集勾选 `Include in Build` 时，Unity 会在运行时自动加载并绑定，无需手工注册
+4. 若取消勾选 `Include in Build`（如配合 Addressables / AssetBundle 延迟加载），在启动阶段订阅 `SpriteAtlasManager.atlasRequested` 事件按需加载 `SpriteAtlas` 并通过回调回传绑定（不存在 `SpriteAtlasManager.Register` API）
 
 ### 6.3 Mask 改 RectMask2D
 
-🔴 **`Mask` 组件有性能问题**，用 `RectMask2D` 替代：
+🔴 **`Mask` 组件有性能问题**，纯矩形裁剪优先用 `RectMask2D` 替代：
 
 | 组件 | 性能 | 适用 |
 |------|------|------|
-| `Mask` | ❌ 慢（额外 Draw Call + 模板缓冲） | 任意形状遮罩（圆 / 星） |
-| `RectMask2D` | ✅ 快（无额外 Draw Call） | 矩形遮罩（绝大多数场景） |
+| `Mask` | ❌ 慢（额外 Draw Call + 模板缓冲） | 任意形状遮罩（圆 / 圆角 / 星形） |
+| `RectMask2D` | ✅ 快（无额外 Stencil Pass） | 矩形遮罩（绝大多数列表与裁剪区） |
 
 ```csharp
-// ❌ 错：用 Mask（圆角矩形不需要）
-public Image m_content;
-m_content.material = ...;  // Mask 性能开销
-
-// ✅ 对：换 RectMask2D（90% 场景够用）
+// ❌ 不必要：纯矩形裁剪却挂载 Mask + Image（引入模板缓冲与额外 Draw Call，并打断合批）
+// ✅ 对：纯矩形裁剪换用 RectMask2D
 [SerializeField] private RectMask2D m_contentMask;
-m_contentMask.padding = new Vector4(10, 10, 10, 10);  // 边距
+
+private void Awake()
+{
+    m_contentMask.padding = new Vector4(10f, 10f, 10f, 10f);  // 内缩裁剪边距
+}
 ```
 
 > **经验**：矩形裁剪可优先评估 `RectMask2D`；圆角、异形、Shader 需求或实际渲染/性能表现不满足时再选择其他方案，并用 Frame Debugger 与 Profiler 验证。
 
 ### 6.4 避免频繁 SetActive
 
-❌ **频繁 `SetActive` 会触发 Canvas Rebuild**，详见 03 性能优化 6.x。
+❌ **频繁 `SetActive` 会触发 Canvas 网格与布局重建（Rebuild）**（遵循 [03-性能优化规则 § 1 Update 循环优化](./03-性能优化规则.md#1-update-循环优化) 的热路径原则）。
+
+- 🔴 **显隐状态应由事件/状态变更驱动**，不要在 `Update()` 中每帧重复写入 `SetActive` 或 `CanvasGroup` 属性。
+- ⚠️ **移动端 / XR 瓦片 GPU（TBDR）Overdraw 警告**：仅把 `CanvasGroup.alpha` 设为 `0` 虽然避免了 Canvas Rebuild，但子元素的网格仍可能保留在绘制批次中并提交透明片元造成 Overdraw（消耗片元着色与带宽）。
+- ✅ **高频整块面板显隐**：优先把该面板拆成独立子 Canvas，在隐藏时事件驱动关闭 `m_subCanvas.enabled = false`（同时关闭 `GraphicRaycaster.enabled`），既避免父 Canvas Rebuild，又彻底跳过渲染提交、零 Overdraw；`CanvasGroup.alpha` 主要用于淡入淡出过渡动画（淡出到 `0` 后再关闭子 Canvas）。
 
 ```csharp
-// ❌ 错：每帧 SetActive（Rebuild 整个 Canvas）
-void Update() { m_panel.SetActive(IsVisible()); }
+// ❌ 错：每帧 SetActive（触发 Rebuild）或在 Update 中无条件改 CanvasGroup
+// void Update() { m_panel.SetActive(IsVisible()); }
 
-// ✅ 对：用 CanvasGroup 控制显隐
-[SerializeField] private CanvasGroup m_panelGroup;
-void Update()
+// ✅ 推荐：事件驱动切换独立子 Canvas（零 Rebuild 且移动端/XR 零 Overdraw）
+[SerializeField] private Canvas m_subCanvas;
+[SerializeField] private GraphicRaycaster m_subRaycaster;
+
+public void SetPanelVisible(bool isVisible)
 {
-    m_panelGroup.alpha = IsVisible() ? 1f : 0f;             // 淡入淡出
-    m_panelGroup.blocksRaycasts = IsVisible();              // 禁用交互
-    m_panelGroup.interactable = IsVisible();
-    // Canvas 不 Rebuild
+    m_subCanvas.enabled = isVisible;
+    if (m_subRaycaster != null) m_subRaycaster.enabled = isVisible;
 }
 ```
 
-### 6.5 减少 Raycaster 命中目标
+### 6.5 减少 Raycaster 命中目标与关闭不必要的 Raycast Target
 
 **`GraphicRaycaster` 会参与命中检测**所有 `Raycast Target = true` 的 UI。成本受 Canvas 数量、层级、输入频率、目标设备和交互方式影响，不能用固定数量阈值判断：
 
-- 🔴 装饰性元素不应接收事件；先关闭其 `raycastTarget`。
-- 🟡 当 Profiler 显示事件系统、射线检测或交互延迟为瓶颈时，再检查命中目标数量与 Canvas 划分。
-- 🟡 UI 数量只是排查信号，不是“< 50 无需看、> 200 必须改”的规则。
-
-**优化方法**：
-- 🔴 装饰性 UI 关掉 `raycastTarget = false`
-- 🟡 用 `CanvasGroup` 把静态分组（一次设置 `blocksRaycasts`）
-- 🟡 复杂 UI 拆成多个 Canvas
-
-### 6.6 关闭不必要的 Raycast Target
-
-🔴 Unity UI 图形组件可能默认参与射线检测。只有实际承担点击、拖拽或阻挡职责的组件才保留 `raycastTarget = true`；纯展示组件应关闭，并结合父级 `CanvasGroup` 和事件穿透需求验证：
+- 🔴 Unity UI 图形组件常默认开启 `raycastTarget = true`；只有实际承担点击、拖拽或阻挡职责的组件才保留 `raycastTarget = true`，纯展示的背景图、装饰图与纯文本应关闭 `raycastTarget = false`（并结合父级 `CanvasGroup` 和事件穿透需求验证）。
+- 🟡 当 Profiler 显示事件系统、射线检测或交互延迟为瓶颈时，再检查命中目标数量与 Canvas 划分；UI 数量只是排查信号，不是“< 50 无需看、> 200 必须改”的规则。
+- 🟡 用 `CanvasGroup.blocksRaycasts` 统一控制静态分组交互，复杂界面拆成多个子 Canvas。
 
 ```csharp
-// ✅ 关闭纯装饰图的 Raycast Target
 [SerializeField] private Image m_backgroundDecoration;
-m_backgroundDecoration.raycastTarget = false;
-
-// ✅ 关闭纯文字的 Raycast Target（除非需要点击）
 [SerializeField] private TMP_Text m_scoreText;
-m_scoreText.raycastTarget = false;
+
+private void Awake()
+{
+    // ✅ 关闭纯装饰图与纯展示文字的 Raycast Target
+    m_backgroundDecoration.raycastTarget = false;
+    m_scoreText.raycastTarget = false;
+}
 ```
 
 **经验法则**：
-- **按钮 / 交互元素** = `raycastTarget = true`
+- **按钮 / 交互元素 / 需拦截点击的遮罩底板** = `raycastTarget = true`
 - **背景图 / 装饰图 / 纯文本** = `raycastTarget = false`
-- **整张 Image 都是按钮** = `raycastTarget = true`
 
 ## 7. 适配与多分辨率
 
@@ -561,10 +597,10 @@ m_scoreText.raycastTarget = false;
 | 模式 | 行为 | 适用 |
 |------|------|------|
 | `Constant Pixel Size` | UI 固定像素（不缩放） | 像素游戏 / 复古游戏 |
-| **`Scale With Screen Size`** | UI 整体缩放适配屏幕 | **大多数游戏** ✅ |
-| `Constant Physical Size` | UI 按物理尺寸显示 | AR / VR |
+| **`Scale With Screen Size`** | UI 整体缩放适配屏幕 | **大多数屏幕空间游戏** ✅ |
+| `Constant Physical Size` | Screen Space 下按屏幕物理 DPI 显示 | 需物理毫米尺度的触屏工具 / 部分手持 AR 屏幕叠加 |
 
-🟡 大多数屏幕空间界面可使用 `Scale With Screen Size`；像素风、AR/VR 或项目已有适配策略应按实际设计目标选择，详见 1.2 Canvas Scaler 设置。
+🟡 大多数屏幕空间界面可使用 `Scale With Screen Size`；**XR（VR / MR）头显空间界面通常使用 World Space Canvas**（而非 Screen Space Overlay 或 `Constant Physical Size`），按物理米制尺寸、舒适视距与角分辨率适配，若项目已安装对应可选包详见 `.agent-rules/xr-common/15-AI通用入口规则.md` 与 `.agent-rules/ui-design/其他规则/07-XR空间界面规范.md`（另见 1.2 Canvas Scaler 设置）。
 
 ### 7.2 Anchor Presets 拉伸方案
 
@@ -579,24 +615,35 @@ m_scoreText.raycastTarget = false;
 
 ### 7.3 Safe Area（刘海屏 / 全面屏）
 
-iPhone X+ / Android 全面屏有"刘海"和"底部安全区"，UI 必须避开：
+iPhone X+ / Android 全面屏在竖屏（顶部刘海、底部手势条）和横屏（左右挖孔/刘海）均存在非安全区，核心交互 UI 必须同时按 **X 与 Y 双轴**避开，并在旋转或折叠屏尺寸变化时重新计算：
 
 ```csharp
-// ✅ 适配刘海屏：把底部 UI 抬高到 Safe Area 之上
-[SerializeField] private RectTransform m_bottomBar;
+// ✅ 适配全面屏：同时约束 X 与 Y 轴，并在方向/分辨率变化时刷新
+[SerializeField] private RectTransform m_safeAreaRoot;
+private Rect m_lastSafeArea;
 
-private void Awake()
+private void OnEnable() => ApplySafeArea();
+private void OnRectTransformDimensionsChange() => ApplySafeArea();
+
+private void ApplySafeArea()
 {
-    var safeArea = Screen.safeArea;  // 系统提供的安全区
+    if (m_safeAreaRoot == null || Screen.width <= 0 || Screen.height <= 0) return;
+
+    var safeArea = Screen.safeArea;
+    if (safeArea == m_lastSafeArea) return;
+    m_lastSafeArea = safeArea;
+
     var anchorMin = safeArea.position;
     var anchorMax = safeArea.position + safeArea.size;
 
-    m_bottomBar.anchorMin = new Vector2(0, anchorMin.y / Screen.height);
-    m_bottomBar.anchorMax = new Vector2(1, anchorMax.y / Screen.height);
+    m_safeAreaRoot.anchorMin = new Vector2(anchorMin.x / Screen.width, anchorMin.y / Screen.height);
+    m_safeAreaRoot.anchorMax = new Vector2(anchorMax.x / Screen.width, anchorMax.y / Screen.height);
+    m_safeAreaRoot.offsetMin = Vector2.zero;
+    m_safeAreaRoot.offsetMax = Vector2.zero;
 }
 ```
 
-**插件推荐**：使用 `Unity.SafeAreaHelper` 或自己写一个 Safe Area 适配器。
+**实现建议**：在项目中封装统一的 Safe Area 容器组件（或沿用项目已验证的适配方案），并分别在竖屏、左/右横屏与折叠屏切分下实机验证。
 
 ### 7.4 横竖屏切换
 
@@ -608,13 +655,13 @@ private void Awake()
 | **动态切换** | 平板 / 双端游戏 |
 
 **固定方向**（推荐）：
-1. `File → Build Settings → Player Settings`
+1. `Edit → Project Settings → Player`（或从 Build Settings / Build Profiles 进入 Player Settings）
 2. `Resolution and Presentation → Default Orientation`
 3. 选 `Portrait` / `Landscape Left` / `Landscape Right`
 
 **动态切换**（需谨慎）：
 - UI 布局要**横竖屏通用**（避免硬编码位置）
-- 用 `AspectRatio` 调整 Anchor Presets
+- 按需配合 `AspectRatioFitter` 维持关键画幅区域的宽高比
 - Canvas Scaler 用 `Match Width Or Height = 0.5`（等比缩放）
 
 ```csharp
@@ -682,11 +729,11 @@ UI_Bg_Panel_Default_1920x1080
 - `UI_Bg_*`：背景
 - `UI_Fx_*`：特效
 
-### 8.3 -sprite 边框（Sliced）
+### 8.3 9-slice 边框（Sliced）
 
-🔴 **可变大小 UI 必须用 9-sprite**（否则拉伸会失真）。
+🟡 **需要按不同宽高复用且保留边角比例的按钮底图、弹窗边框，优先使用 9-slice（Sliced）**；纯色图、等比图标或重复纹理按视觉需求选择 `Simple` 或 `Tiled`。
 
-**创建 9-sprite**：
+**创建 9-slice**：
 1. 选 Sprite，Inspector 选 `Texture Type = Sprite (2D and UI)`
 2. `Sprite Editor` → 拖动四个绿线（左 / 右 / 上 / 下）定义边框
 
@@ -700,13 +747,13 @@ UI_Bg_Panel_Default_1920x1080
 
 **使用**：
 - Image `Image Type = Sliced`
-- Sprite 选择 9-sprite 资源
+- Sprite 选择已切好 9-slice 边框的资源
 - 调整 RectTransform 任意大小，边角不失真
 
 ```csharp
-// ✅ 按钮背景用 9-sprite
+// ✅ 按钮背景用 9-slice
 [SerializeField] private Image m_buttonBg;
-m_buttonBg.sprite = slicedButtonSprite;  // 9-sprite 资源
+m_buttonBg.sprite = slicedButtonSprite;  // 9-slice 资源
 m_buttonBg.type = Image.Type.Sliced;     // 切到 Sliced 模式
 // 任意调整 RectTransform 宽高，边角不变形
 ```
@@ -744,7 +791,16 @@ private Image m_image;
 private void Awake()
 {
     m_image = GetComponent<Image>();
+}
+
+private void OnEnable()
+{
     m_button.onClick.AddListener(OnButtonClicked);
+}
+
+private void OnDisable()
+{
+    m_button.onClick.RemoveListener(OnButtonClicked);
 }
 ```
 
@@ -785,15 +841,18 @@ public class InventoryItem : MonoBehaviour
 | **ScriptableObject** | 配置 / 共享数据 | 美术可调 | 适合静态数据 |
 
 ```csharp
-// ✅ 模式 1：直接引用（简单 UI）
+// ✅ 模式 1：直接引用 + 脏检查（简单 UI，避免每帧无条件分配字符串）
 public class HUD : MonoBehaviour
 {
     [SerializeField] private PlayerStats m_playerStats;
     [SerializeField] private TMP_Text m_hpText;
+    private int m_lastHealth = int.MinValue;
 
-    private void Update()
+    private void LateUpdate()
     {
-        m_hpText.text = $"HP: {m_playerStats.Health}";
+        if (m_playerStats == null || m_playerStats.Health == m_lastHealth) return;
+        m_lastHealth = m_playerStats.Health;
+        m_hpText.SetText("HP: {0}", m_lastHealth);  // 仅变化时更新，且避免字符串拼接分配
     }
 }
 
@@ -825,4 +884,4 @@ public class UISettings : ScriptableObject
 }
 ```
 
-> 详见 `02-模式设计规则.md` 2.1 ScriptableObject 架构。
+> 详见 [02-模式设计规则 § 3.1 ScriptableObject 架构（SOA）](./02-模式设计规则.md#31-scriptableobject-架构soa)。

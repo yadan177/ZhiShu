@@ -7,8 +7,8 @@ import path from "node:path";
 import { t, x } from "tar";
 
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const ASSET_NAME = "agentrulekit-rulepacks.tar.gz";
-const RELEASE_MANIFEST = "agentrulekit-release.json";
+const ASSET_NAME = "zhishu-rulepacks.tar.gz";
+const RELEASE_MANIFEST = "zhishu-release.json";
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 200 * 1024 * 1024;
 const MAX_ENTRIES = 5_000;
@@ -29,9 +29,14 @@ export function assertReleaseAssetUnchanged(
   }
 }
 
-function stableVersionParts(version: string): bigint[] {
-  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`无法比较非 stable 规则版本：${version}`);
-  return version.split(".").map(BigInt);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stableVersionParts(version: string): [bigint, bigint, bigint] {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!match || !match[1] || !match[2] || !match[3]) throw new Error(`无法比较非 stable 规则版本：${version}`);
+  return [BigInt(match[1]), BigInt(match[2]), BigInt(match[3])];
 }
 
 export function assertReleaseNotOlder(
@@ -41,11 +46,14 @@ export function assertReleaseNotOlder(
   if (!installed.sourceVersion) return;
   const current = stableVersionParts(installed.sourceVersion);
   const candidate = stableVersionParts(latest.version);
-  for (let index = 0; index < current.length; index++) {
-    if (candidate[index]! < current[index]!) {
+  for (let index = 0; index < 3; index++) {
+    const currentPart = current[index];
+    const candidatePart = candidate[index];
+    if (currentPart === undefined || candidatePart === undefined) continue;
+    if (candidatePart < currentPart) {
       throw new Error(`GitHub 最新 Release ${latest.version} 低于项目锁定版本 ${installed.sourceVersion}；拒绝自动降级，请核查发布源`);
     }
-    if (candidate[index]! > current[index]!) return;
+    if (candidatePart > currentPart) return;
   }
 }
 
@@ -56,35 +64,35 @@ export interface DownloadedRulepacks {
   cleanup: () => Promise<void>;
 }
 
-interface GitHubRelease {
-  tag_name: string;
-  draft?: boolean;
-  prerelease?: boolean;
-  assets: Array<{ name: string; browser_download_url: string; digest?: string; size: number }>;
-}
-
 async function findRelease(repository: string, endpoint: string, fetcher: typeof fetch, expectedTag?: string): Promise<ReleaseInfo> {
   if (!REPOSITORY_PATTERN.test(repository)) throw new Error(`非法 GitHub 仓库标识：${repository}`);
   const response = await fetcher(`https://api.github.com/repos/${repository}/releases/${endpoint}`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "AgentRuleKit" },
+    headers: { Accept: "application/vnd.github+json", "User-Agent": "ZhiShu" },
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error(`无法检查 GitHub Release：HTTP ${response.status}`);
-  const release = await response.json() as GitHubRelease;
-  if (!/^v?\d+\.\d+\.\d+$/.test(release.tag_name)) {
-    throw new Error(`Release 标签不符合 stable 版本格式：${release.tag_name}`);
+  const rawRelease: unknown = await response.json();
+  if (!isRecord(rawRelease) || typeof rawRelease.tag_name !== "string") {
+    throw new Error("GitHub Release 返回数据结构无效");
   }
-  if (expectedTag && release.tag_name !== expectedTag) throw new Error(`GitHub Release 标签与请求的 ${expectedTag} 不一致`);
-  if (release.draft || release.prerelease) throw new Error(`Release ${release.tag_name} 尚未正式发布`);
-  const asset = Array.isArray(release.assets) ? release.assets.find((item) => item.name === ASSET_NAME) : undefined;
-  if (!asset) throw new Error(`Release ${release.tag_name} 缺少 ${ASSET_NAME}`);
-  if (!asset.digest || !/^sha256:[a-f0-9]{64}$/.test(asset.digest)) {
-    throw new Error(`Release ${release.tag_name} 缺少可信的 SHA-256 摘要`);
+  const tagName = rawRelease.tag_name;
+  if (!/^v?\d+\.\d+\.\d+$/.test(tagName)) {
+    throw new Error(`Release 标签不符合 stable 版本格式：${tagName}`);
   }
-  if (!Number.isInteger(asset.size) || asset.size < 1 || asset.size > MAX_ARCHIVE_BYTES) throw new Error("规则包压缩包体积超限");
-  const expectedUrl = `https://github.com/${repository}/releases/download/${release.tag_name}/${ASSET_NAME}`;
+  if (expectedTag && tagName !== expectedTag) throw new Error(`GitHub Release 标签与请求的 ${expectedTag} 不一致`);
+  if (rawRelease.draft === true || rawRelease.prerelease === true) throw new Error(`Release ${tagName} 尚未正式发布`);
+  const assets = Array.isArray(rawRelease.assets) ? rawRelease.assets : [];
+  const asset = assets.find((item): item is Record<string, unknown> => isRecord(item) && item.name === ASSET_NAME);
+  if (!asset) throw new Error(`Release ${tagName} 缺少 ${ASSET_NAME}`);
+  if (typeof asset.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(asset.digest)) {
+    throw new Error(`Release ${tagName} 缺少可信的 SHA-256 摘要`);
+  }
+  if (typeof asset.size !== "number" || !Number.isInteger(asset.size) || asset.size < 1 || asset.size > MAX_ARCHIVE_BYTES) {
+    throw new Error("规则包压缩包体积超限");
+  }
+  const expectedUrl = `https://github.com/${repository}/releases/download/${tagName}/${ASSET_NAME}`;
   if (asset.browser_download_url !== expectedUrl) throw new Error("Release 下载地址不可信");
-  return { version: release.tag_name.replace(/^v/, ""), assetUrl: asset.browser_download_url, digest: asset.digest };
+  return { version: tagName.replace(/^v/, ""), assetUrl: asset.browser_download_url, digest: asset.digest };
 }
 
 export async function findLatestRelease(repository: string, fetcher: typeof fetch = fetch): Promise<ReleaseInfo> {
@@ -119,7 +127,7 @@ export async function downloadRulepacks(release: ReleaseInfo, fetcher: typeof fe
   if (bytes.length < 1 || bytes.length > MAX_ARCHIVE_BYTES) throw new Error("规则包压缩包体积超限");
   const actual = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   if (actual !== release.digest) throw new Error("规则包 SHA-256 校验失败；未修改项目");
-  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-release-"));
+  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "zhishu-release-"));
   const archive = path.join(sourceRoot, "rulepacks.tar.gz");
   try {
     await writeFile(archive, bytes);
@@ -166,8 +174,8 @@ export async function downloadRulepacks(release: ReleaseInfo, fetcher: typeof fe
     if (!seen.has(RELEASE_MANIFEST)) throw new Error("规则包归档缺少来源提交记录");
     await x({ file: archive, cwd: sourceRoot, preservePaths: false, noMtime: true, strict: true, maxDecompressionRatio: MAX_DECOMPRESSION_RATIO });
     await rm(archive);
-    const metadata = JSON.parse(await readFile(path.join(sourceRoot, RELEASE_MANIFEST), "utf8")) as { schemaVersion?: unknown; version?: unknown; sourceCommit?: unknown };
-    if (metadata.schemaVersion !== 1 || metadata.version !== release.version || typeof metadata.sourceCommit !== "string" || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(metadata.sourceCommit)) {
+    const metadata: unknown = JSON.parse(await readFile(path.join(sourceRoot, RELEASE_MANIFEST), "utf8"));
+    if (!isRecord(metadata) || metadata.schemaVersion !== 1 || metadata.version !== release.version || typeof metadata.sourceCommit !== "string" || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(metadata.sourceCommit)) {
       throw new Error("规则包来源提交记录与 Release 版本不匹配或格式不合法");
     }
     await readFile(path.join(sourceRoot, "rulepacks", "common", "pack.json"), "utf8");

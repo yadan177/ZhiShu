@@ -7,6 +7,6 @@ export const testAdapter: TargetAdapter = {
   blockStart: "<!-- test-rule:start -->",
   blockEnd: "<!-- test-rule:end -->",
   renderManagedBlock(config, entries) {
-    return `${this.blockStart}\nAgentRuleKit\n${config.project.overrides}\n${Object.keys(entries).join(",")}\n${this.blockEnd}`;
+    return `${this.blockStart}\nZhiShu\n${config.project.overrides}\n${Object.keys(entries).join(",")}\n${this.blockEnd}`;
   },
 };

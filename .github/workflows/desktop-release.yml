@@ -25,7 +25,7 @@ jobs:
       - name: 核对桌面标签和源码版本
         run: node -e 'const p=require("./packages/desktop-app/package.json"); if (process.env.GITHUB_REF_NAME !== `desktop-v${p.version}`) process.exit(1)'
       - run: npm run check
-      - run: npm run typecheck --workspace agentrulekit-desktop
+      - run: npm run typecheck --workspace zhishu-desktop
 
   macos:
     needs: verify
@@ -39,7 +39,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run pack:mac --workspace agentrulekit-desktop
+      - run: npm run pack:mac --workspace zhishu-desktop
       - name: 核对手动安装包
         run: node packages/desktop-app/scripts/verify-update-assets.mjs
       - uses: actions/upload-artifact@v4
@@ -61,7 +61,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run pack:win --workspace agentrulekit-desktop
+      - run: npm run pack:win --workspace zhishu-desktop
       - name: 核对手动安装包
         run: node packages/desktop-app/scripts/verify-update-assets.mjs --manual
       - uses: actions/upload-artifact@v4
@@ -89,8 +89,8 @@ jobs:
           version="${GITHUB_REF_NAME#desktop-v}"
           notes="packages/desktop-app/RELEASE-${version}.md"
           test -f "$notes"
-          test -f "release-assets/AgentRuleKit-Desktop-${version}-macOS-arm64.dmg"
-          test -f "release-assets/AgentRuleKit-Desktop-${version}-Windows-x64.exe"
+          test -f "release-assets/ZhiShu-Desktop-${version}-macOS-arm64.dmg"
+          test -f "release-assets/ZhiShu-Desktop-${version}-Windows-x64.exe"
           test ! -f release-assets/latest.yml
-          gh release create "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false --title "AI 开发工具箱 $version" --notes-file "$notes"
+          gh release create "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false --title "智枢 $version" --notes-file "$notes"
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false

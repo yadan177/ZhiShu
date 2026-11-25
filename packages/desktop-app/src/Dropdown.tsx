@@ -60,14 +60,15 @@ export function Dropdown<Value extends string>({ label, value, options, onChange
       const text = previous === character ? character : previous + character;
       search.current = { text, time: Date.now() };
       const ordered = text.length === 1 ? [...enabled.filter((index) => index > active), ...enabled.filter((index) => index <= active)] : enabled;
-      const match = ordered.find((index) => options[index].label.toLocaleLowerCase().startsWith(text));
+      const match = ordered.find((index) => options[index]?.label.toLocaleLowerCase().startsWith(text));
       if (match !== undefined) setActive(match);
     }
   }
 
   useLayoutEffect(() => {
-    if (!open) return;
-    const rect = trigger.current!.getBoundingClientRect();
+    const button = trigger.current;
+    if (!open || !button) return;
+    const rect = button.getBoundingClientRect();
     const below = window.innerHeight - rect.bottom - 16;
     const above = rect.top - 16;
     const upwards = below < Math.min(280, above);

@@ -1,124 +1,38 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { AssetsPage, type AssetsApi } from "./AssetsPage";
-import { Dropdown } from "./Dropdown";
-import { ArrowClockwise, CheckCircle, Cube, FolderSimple, UsersThree, WarningCircle, X } from "@phosphor-icons/react";
-import { FaJava } from "react-icons/fa";
-import { SiCursor, SiGo, SiJavascript, SiPython, SiUnity } from "react-icons/si";
-import { TbBrandOpenai } from "react-icons/tb";
-
-type StackChoice = "unity" | "js-ts" | "java" | "go" | "python";
-type PlatformChoice = "codex" | "qoder" | "cursor" | "workbuddy";
-type Mode = "install" | "update" | "uninstall";
-type Page = "projects" | "rules" | "assets";
-type Change = { path: string; action: "add" | "modify" | "remove"; before?: string; after?: string };
-type Issue = { code: string; message: string };
-type ProjectStatus = { root: string; installed: boolean; valid: boolean; rulepacks: string[]; targets: PlatformChoice[]; version?: string; issues: Issue[] };
-type RegisteredProject = { root: string; addedAt: string; status?: ProjectStatus; error?: string };
-type UpdateCheck = { root: string; currentVersion: string; latestVersion: string; available: boolean; targetsChanged: boolean };
-type Preview = { kind: Mode; root: string; changes: Change[]; retainedPaths: string[]; conflicts: Issue[]; version?: string; targets: PlatformChoice[] };
-type SoftwareUpdateState = { phase: "idle" | "checking" | "current" | "available" | "downloading" | "ready" | "manual" | "error"; currentVersion: string; availableVersion?: string; percent?: number; message?: string };
-type PluginSource = { kind: "skill" | "capability-plugin"; key: string; name: string; version: string; title: string; author: string; license: string; sourceRoot: string; skills: string[]; files: { path: string; bytes: number; sha256: string }[]; sourceDigest: string; runtimeDependencies: string[]; delivery: "traework-skill" | "unsupported" };
-type DesktopApi = AssetsApi & {
-  listPluginImports(): Promise<PluginSource[]>;
-  inspectPluginSource(): Promise<PluginSource | undefined>;
-  importPluginSource(): Promise<PluginSource>;
-  exportTraeWorkSkill(key: string): Promise<{ path: string; sha256: string } | undefined>;
-  chooseProject(): Promise<ProjectStatus | undefined>;
-  listProjects(): Promise<RegisteredProject[]>;
-  selectProject(root: string): Promise<ProjectStatus>;
-  forgetProject(root: string): Promise<void>;
-  previewInstall(stack: StackChoice, platforms: PlatformChoice[]): Promise<Preview>;
-  applyInstall(): Promise<ProjectStatus>;
-  checkUpdate(platforms: PlatformChoice[]): Promise<UpdateCheck>;
-  previewUpdate(): Promise<Preview>;
-  applyUpdate(): Promise<ProjectStatus>;
-  previewUninstall(): Promise<Preview>;
-  applyUninstall(): Promise<ProjectStatus>;
-  clearPreview(): Promise<void>;
-  getSoftwareUpdate(): Promise<SoftwareUpdateState>;
-  checkSoftwareUpdate(): Promise<SoftwareUpdateState>;
-  downloadSoftwareUpdate(): Promise<SoftwareUpdateState>;
-  installSoftwareUpdate(): Promise<void>;
-  openSoftwareDownload(): Promise<void>;
-  onSoftwareUpdate(listener: (state: SoftwareUpdateState) => void): () => void;
-};
-declare global { interface Window { agentRuleKit?: DesktopApi } }
-
-const stacks = [
-  { id: "unity", name: "Unity", Icon: SiUnity, color: "#252525", packs: ["通用规则", "Unity 开发规则", "Unity 文档规则"] },
-  { id: "js-ts", name: "JS + TS", Icon: SiJavascript, color: "#e3bf19", packs: ["通用规则", "JavaScript 开发规则", "TypeScript 开发规则", "JS/TS 文档规则"] },
-  { id: "java", name: "Java", Icon: FaJava, color: "#e75822", packs: ["通用规则", "Java 开发规则", "Java 文档规则"] },
-  { id: "go", name: "Go", Icon: SiGo, color: "#0798b8", packs: ["通用规则", "Go 开发规则", "Go 文档规则"] },
-  { id: "python", name: "Python", Icon: SiPython, color: "#3475a7", packs: ["通用规则", "Python 开发规则", "Python 文档规则"] },
-] as const;
-const platforms = [
-  { id: "codex", name: "Codex", Icon: TbBrandOpenai },
-  { id: "qoder", name: "Qoder", Icon: Cube },
-  { id: "cursor", name: "Cursor", Icon: SiCursor },
-  { id: "workbuddy", name: "WorkBuddy", Icon: UsersThree },
-] as const;
-const platformName: Record<PlatformChoice, string> = Object.fromEntries(platforms.map((item) => [item.id, item.name])) as Record<PlatformChoice, string>;
-function platformLabel(targets: PlatformChoice[]): string { return targets.map((target) => platformName[target] ?? target).join(" · "); }
-const packNames: Record<string, string> = {
-  common: "通用规则", unity: "Unity 开发规则", javascript: "JavaScript 开发规则", typescript: "TypeScript 开发规则",
-  java: "Java 开发规则", go: "Go 开发规则", python: "Python 开发规则",
-  "project-docs/unity": "Unity 文档规则", "project-docs/js-ts": "JS/TS 文档规则",
-  "project-docs/java": "Java 文档规则", "project-docs/go": "Go 文档规则", "project-docs/python": "Python 文档规则",
-};
-
-function message(error: unknown): string {
-  if (error instanceof Error) return error.message.replace(/^Error invoking remote method '[^']+': Error: /, "");
-  return String(error);
-}
-function Choice({ item, selected, disabled, multi, onSelect }: {
-  item: (typeof stacks)[number] | (typeof platforms)[number]; selected: boolean; disabled?: boolean; multi?: boolean; onSelect?: () => void;
-}) {
-  const Icon = item.Icon;
-  return <button type="button" className={`choice${selected ? " selected" : ""}${multi ? " multi" : ""}`}
-    role={multi ? "checkbox" : "radio"} aria-checked={selected} disabled={disabled} onClick={onSelect}>
-    <Icon className="choice-icon" size={45} color={"color" in item ? item.color : undefined} aria-hidden="true" />
-    <span className="choice-name">{item.name}</span>
-    <span className="radio-indicator" aria-hidden="true"><span /></span>
-  </button>;
-}
-function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
-  return <div className="modal-backdrop"><section className="modal preview-modal" role="dialog" aria-modal="true" aria-label={title}>
-    <header className="modal-header"><h2>{title}</h2><button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={22} /></button></header>
-    {children}
-  </section></div>;
-}
-function PreviewDialog({ preview, busy, onClose, onApply }: { preview: Preview; busy: boolean; onClose: () => void; onApply: () => void }) {
-  const [selected, setSelected] = useState(0);
-  const current = preview.changes[selected];
-  const actionLabel = { add: "新增", modify: "修改", remove: "删除" };
-  return <Modal title={preview.kind === "install" ? "安装预览" : preview.kind === "update" ? "更新变更" : "卸载预览"} onClose={onClose}>
-    <div className="preview-meta"><strong>{preview.root}</strong><span>{platformLabel(preview.targets)} · {preview.kind === "uninstall" ? "项目规则" : `规则版本 ${preview.version}`}</span></div>
-    {preview.conflicts.length > 0 && <div className="issue-box"><WarningCircle size={19} /><div>{preview.conflicts.map((issue) => <p key={issue.code + issue.message}>{issue.message}</p>)}</div></div>}
-    <div className="preview-section"><h3>文件变更 · {preview.changes.length}</h3><div className="change-list">
-      {preview.changes.map((change, index) => <button type="button" key={change.path} className={`change-row${selected === index ? " active" : ""}`} onClick={() => setSelected(index)}>
-        <span className={`change-action ${change.action}`}>{actionLabel[change.action]}</span><span>{change.path}</span>
-      </button>)}
-    </div></div>
-    {current && <div className="preview-section"><h3>文件内容 · {current.path}</h3><div className="content-comparison">
-      {current.before !== undefined && <div><span>原内容</span><pre>{current.before}</pre></div>}
-      {current.after !== undefined && <div><span>变更后</span><pre>{current.after}</pre></div>}
-    </div></div>}
-    {preview.retainedPaths.length > 0 && <div className="preview-section"><h3>保留项目文件</h3><ul className="retained-list">{preview.retainedPaths.map((item) => <li key={item}>{item}</li>)}</ul></div>}
-    <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>返回</button>
-      <button type="button" className={`primary-button${preview.kind === "uninstall" ? " danger-button" : ""}`} onClick={onApply} disabled={busy || preview.conflicts.length > 0 || preview.changes.length === 0}>
-        {busy ? "处理中…" : preview.kind === "install" ? "确认安装" : preview.kind === "update" ? "确认更新" : "确认卸载"}
-      </button></div>
-  </Modal>;
-}
+import { useEffect, useMemo, useState } from "react";
+import { ArrowClockwise, Cpu, Database, FolderSimple, SquaresFour } from "@phosphor-icons/react";
+import { AssetsPage } from "./AssetsPage";
+import { ZhiShuMark } from "./BrandIcons";
+import { APP_COPY, RULEPACK_BY_ID } from "./copy";
+import { PreviewDialog } from "./PreviewDialog";
+import { ProjectRulesPage } from "./ProjectRulesPage";
+import { ProjectsPage } from "./ProjectsPage";
+import { SourcesPage, ToolsPage } from "./ToolsAndSourcesPages";
+import {
+  formatErrorMessage,
+  type ActiveView,
+  type AssetSourceRecord,
+  type DesktopApi,
+  type PlatformChoice,
+  type Preview,
+  type ProjectStatus,
+  type RegisteredProject,
+  type RuleMode,
+  type SoftwareUpdateState,
+  type UpdateCheck,
+  type WorkspaceSourceInfo,
+} from "./types";
 
 export function App() {
-  const [page, setPage] = useState<Page>("projects");
-  const [mode, setMode] = useState<Mode>("install");
+  const [view, setView] = useState<ActiveView>("projects");
+  const [mode, setMode] = useState<RuleMode>("install");
   const [status, setStatus] = useState<ProjectStatus>();
   const [projects, setProjects] = useState<RegisteredProject[]>([]);
+  const [sources, setSources] = useState<AssetSourceRecord[]>([]);
+  const [sourceKind, setSourceKind] = useState<"github" | "workspace">("github");
+  const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSourceInfo>();
+  const [selectedRulepacks, setSelectedRulepacks] = useState<string[]>(["common"]);
+  const [selectedTargets, setSelectedTargets] = useState<PlatformChoice[]>(["codex"]);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck>();
-  const [stackId, setStackId] = useState<StackChoice>("unity");
-  const [platformIds, setPlatformIds] = useState<PlatformChoice[]>(["codex"]);
   const [preview, setPreview] = useState<Preview>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -126,175 +40,509 @@ export function App() {
   const [softwareState, setSoftwareState] = useState<SoftwareUpdateState>();
   const [softwareBusy, setSoftwareBusy] = useState(false);
   const [softwareError, setSoftwareError] = useState("");
-  const unavailable = !window.agentRuleKit;
+  const unavailable = !window.zhishu;
+
+  const enterpriseRequiredPacks = useMemo(() => {
+    const required = new Set<string>();
+    for (const src of sources) {
+      if (src.tier !== "enterprise") continue;
+      for (const packId of src.requiredRulepacks) required.add(packId);
+    }
+    return required;
+  }, [sources]);
 
   useEffect(() => {
-    const desktop = window.agentRuleKit;
+    const desktop = window.zhishu;
     if (!desktop) return;
-    const unsubscribe = desktop.onSoftwareUpdate(setSoftwareState);
-    void desktop.getSoftwareUpdate().then(setSoftwareState).catch(() => {});
-    void desktop.listProjects().then(setProjects).catch((problem) => setError(message(problem)));
-    return unsubscribe;
+    let cancelled = false;
+    const unsubscribe = desktop.onSoftwareUpdate((nextState) => {
+      if (!cancelled) setSoftwareState(nextState);
+    });
+    void desktop
+      .getSoftwareUpdate()
+      .then((nextState) => {
+        if (!cancelled) setSoftwareState(nextState);
+      })
+      .catch(() => {
+        // 启动阶段版本检测失败不阻塞本地项目与规则管理，状态推送会按需刷新。
+      });
+    void desktop
+      .listProjects()
+      .then((list) => {
+        if (!cancelled) setProjects(list);
+      })
+      .catch((problem) => {
+        if (!cancelled) setError(formatErrorMessage(problem));
+      });
+    void desktop
+      .listSources()
+      .then((list) => {
+        if (!cancelled) setSources(list);
+      })
+      .catch(() => {
+        // 来源列表读取失败不阻塞基础项目管理。
+      });
+    void desktop
+      .getDefaultWorkspaceSource()
+      .then((detected) => {
+        if (!cancelled && detected) setWorkspaceSource(detected);
+      })
+      .catch(() => {
+        // 未检测到默认开发规则仓库时保持官方源默认，用户仍可手动选择本地规则源。
+      });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
-  function softwareAction(): void {
-    const desktop = window.agentRuleKit;
-    if (!desktop || !softwareState || softwareBusy) return;
-    setSoftwareBusy(true); setSoftwareError("");
-    void (async () => {
-      try {
-        if (softwareState.phase === "manual") return await desktop.openSoftwareDownload();
-        if (softwareState.phase === "ready") return await desktop.installSoftwareUpdate();
-        let state = softwareState;
-        if (state.phase === "error") state = await desktop.checkSoftwareUpdate();
-        if (state.phase === "manual") return await desktop.openSoftwareDownload();
-        if (state.phase === "error") { setSoftwareError(state.message ?? "检查软件版本失败"); return; }
-        if (state.phase !== "available") return;
-        state = await desktop.downloadSoftwareUpdate();
-        if (state.phase === "ready") await desktop.installSoftwareUpdate();
-        else if (state.phase === "error") setSoftwareError(state.message ?? "下载软件更新失败");
-      } catch (problem) { setSoftwareError(message(problem)); }
-      finally { setSoftwareBusy(false); }
-    })();
+  function api(): DesktopApi {
+    if (!window.zhishu) throw new Error("请在桌面应用中使用智枢");
+    return window.zhishu;
   }
-
-  const softwareTip = softwareState?.phase === "available" || softwareState?.phase === "manual" || softwareState?.phase === "downloading" || softwareState?.phase === "ready" || (softwareState?.phase === "error" && !!softwareState.availableVersion);
-  const softwareLabel = softwareState?.phase === "ready" ? "重启更新" : softwareState?.phase === "downloading" ? `下载 ${softwareState.percent ?? 0}%`
-    : softwareState?.phase === "error" ? "重试更新" : "下载新版";
 
   async function run(action: () => Promise<void>): Promise<void> {
-    setBusy(true); setError("");
-    try { await action(); } catch (problem) { setError(message(problem)); }
-    finally { setBusy(false); }
+    setBusy(true);
+    setError("");
+    try {
+      await action();
+    } catch (problem) {
+      setError(formatErrorMessage(problem));
+    } finally {
+      setBusy(false);
+    }
   }
-  function api(): DesktopApi {
-    if (!window.agentRuleKit) throw new Error("请在桌面应用中使用工具箱");
-    return window.agentRuleKit;
-  }
-  function showProject(selected: ProjectStatus, openRules = true): void {
-    setStatus(selected); setMode(selected.installed ? "update" : "install");
-    setPlatformIds(selected.installed ? selected.targets : ["codex"]);
-    setUpdateCheck(undefined); setPreview(undefined); setNotice("");
-    if (openRules) setPage("rules");
-  }
+
   function clearPreview(): void {
     setPreview(undefined);
-    if (window.agentRuleKit) void window.agentRuleKit.clearPreview().catch((problem) => setError(message(problem)));
+    if (window.zhishu) {
+      void window.zhishu.clearPreview().catch((problem) => setError(formatErrorMessage(problem)));
+    }
   }
-  function chooseProject(openRules = true): void {
+
+  function filterPacksForSource(packs: readonly string[], nextSource: "github" | "workspace", ws?: WorkspaceSourceInfo): string[] {
+    const merged = [...new Set([...packs, ...enterpriseRequiredPacks])];
+    if (nextSource === "workspace") {
+      const allowed = ws ? new Set(ws.packs.map((pack) => pack.id)) : undefined;
+      const kept = allowed ? merged.filter((id) => allowed.has(id)) : merged;
+      return kept.length ? kept : ["common"];
+    }
+    const kept = merged.filter((id) => RULEPACK_BY_ID[id]?.releasedInOfficial015);
+    return kept.length ? kept : ["common"];
+  }
+
+  function showProject(selected: ProjectStatus, openRules = true): void {
+    setStatus(selected);
+    setMode(selected.installed ? "update" : "install");
+    setSelectedTargets(selected.installed ? selected.targets : ["codex"]);
+    setSelectedRulepacks(
+      selected.installed
+        ? selected.rulepacks
+        : filterPacksForSource(selected.recommendedRulepacks, sourceKind, workspaceSource),
+    );
+    setUpdateCheck(undefined);
+    setPreview(undefined);
+    setNotice("");
+    if (openRules) setView("rules");
+  }
+
+  function chooseProject(openRules = false): void {
     void run(async () => {
       const selected = await api().chooseProject();
-      if (selected) { showProject(selected, openRules); setProjects(await api().listProjects()); }
+      if (selected) {
+        showProject(selected, openRules);
+        setProjects(await api().listProjects());
+      }
     });
   }
+
   function selectProject(root: string): void {
-    void run(async () => showProject(await api().selectProject(root)));
+    void run(async () => {
+      showProject(await api().selectProject(root), true);
+    });
   }
+
   function forgetProject(root: string): void {
     void run(async () => {
       await api().forgetProject(root);
-      if (status?.root === root) { setStatus(undefined); setPreview(undefined); setUpdateCheck(undefined); }
+      if (status?.root === root) {
+        setStatus(undefined);
+        setPreview(undefined);
+        setUpdateCheck(undefined);
+      }
       setProjects(await api().listProjects());
       setNotice("已移出列表");
     });
   }
-  function openPreview(): void {
+
+  function recoverProject(root?: string): void {
     void run(async () => {
-      if (!status) throw new Error("请先选择项目文件夹");
-      setPreview(mode === "install" ? await api().previewInstall(stackId, platformIds) : mode === "update" ? await api().previewUpdate() : await api().previewUninstall());
-    });
-  }
-  function checkForUpdate(): void {
-    void run(async () => {
-      if (!status) throw new Error("请先选择项目文件夹");
-      const result = await api().checkUpdate(platformIds);
-      setUpdateCheck(result);
-      setNotice(result.targetsChanged ? "平台已变更" : result.available ? `新版本 ${result.latestVersion}` : "已是最新版本");
-    });
-  }
-  function apply(): void {
-    if (!preview) return;
-    void run(async () => {
-      const result = preview.kind === "install" ? await api().applyInstall() : preview.kind === "update" ? await api().applyUpdate() : await api().applyUninstall();
-      setStatus(result); setPlatformIds(result.installed ? result.targets : ["codex"]); setPreview(undefined);
-      setUpdateCheck(undefined);
+      const result = await api().recoverProject(root);
+      setStatus(result.status);
       setProjects(await api().listProjects());
-      setNotice(preview.kind === "install" ? "安装完成" : preview.kind === "update" ? "更新完成" : "卸载完成");
-      if (!result.valid && result.installed) setError(result.issues.map((item) => item.message).join("；"));
+      setUpdateCheck(undefined);
+      setPreview(undefined);
+      setNotice(result.recoveredPath ? `已恢复中断事务，原记录保留在 ${result.recoveredPath}` : "没有未完成事务");
     });
   }
 
-  function togglePlatform(id: PlatformChoice): void {
-    setPlatformIds((current) => current.includes(id) ? current.filter((target) => target !== id) : [...current, id]);
-    setUpdateCheck(undefined); setNotice("");
+  function chooseWorkspaceSource(): void {
+    void run(async () => {
+      const selected = await api().chooseWorkspaceSource();
+      if (selected) {
+        setWorkspaceSource(selected);
+        setSourceKind("workspace");
+        setSelectedRulepacks((current) => filterPacksForSource(current, "workspace", selected));
+        setNotice(`已加载本地规则源（${selected.packs.length} 个规则包）`);
+      }
+    });
   }
-  const cannotPreview = busy || !status || (mode === "install" ? status.installed || platformIds.length === 0 : mode === "update" ? !status.installed || !status.valid || platformIds.length === 0 : !status.installed);
-  return <div className="app-shell">
-    <header className="app-header"><span className="brand">AI 开发工具箱</span>
-      {!unavailable && softwareTip && <button type="button" className="software-tip has-update" onClick={softwareAction} disabled={softwareBusy || softwareState?.phase === "downloading"} title={softwareError || softwareState?.message || undefined} aria-label={`软件更新：${softwareLabel}`}><ArrowClockwise size={18} aria-hidden="true" />{softwareLabel}</button>}
-      <nav className="mode-switch" aria-label="工具箱页面">
-      <button type="button" className={page === "projects" ? "active" : ""} disabled={busy} onClick={() => { clearPreview(); setError(""); setNotice(""); setPage("projects"); }}>我的项目</button>
-      <button type="button" className={page === "rules" ? "active" : ""} disabled={busy} onClick={() => { clearPreview(); setError(""); setNotice(""); setPage("rules"); }}>项目规则</button>
-      <button type="button" className={page === "assets" ? "active" : ""} disabled={busy} onClick={() => { clearPreview(); setPage("assets"); }}>插件与技能</button>
-    </nav></header>
-    {page === "assets" ? <AssetsPage api={window.agentRuleKit} /> : page === "projects" ?
-    <main className="main-content projects-page">
-      <div className="page-heading"><h1>我的项目</h1><button type="button" className="secondary-button" onClick={() => chooseProject(false)} disabled={busy || unavailable}><FolderSimple size={18} aria-hidden="true" />添加项目</button></div>
-      <section className="registered-projects" aria-label="我的项目">
-        {projects.length === 0 ? <p className="empty-projects">暂无项目</p> :
-          <div className="project-list">{projects.map((item) => <div className={`project-list-item${status?.root === item.root ? " current" : ""}`} key={item.root}>
-            <button type="button" className="project-list-select" onClick={() => selectProject(item.root)} disabled={busy || !!item.error} title={item.root}>
-              <strong>{item.root.split(/[\\/]/).filter(Boolean).at(-1) ?? item.root}</strong><span>{item.root}</span>
-            </button>
-            <span className="project-list-state">{item.error ? "路径不可用" : item.status?.installed ? item.status.valid ? `规则 ${item.status.version ?? "已安装"}` : "规则需处理" : "未安装规则"}</span>
-            <button type="button" className="text-button" onClick={() => selectProject(item.root)} disabled={busy || !!item.error}>管理规则</button>
-            <button type="button" className="text-button" onClick={() => forgetProject(item.root)} disabled={busy}>移出列表</button>
-          </div>)}</div>}
-      </section>
-      {error && <div className="error" role="alert"><WarningCircle size={20} />{error}</div>}
-      {notice && <div className="notice" role="status"><CheckCircle size={20} />{notice}</div>}
-    </main> : <>
-    <main className="main-content rules-page"><h1>项目规则</h1>
-      <nav className="mode-switch rule-mode-switch" aria-label="规则操作">
-      <button type="button" className={mode === "install" ? "active" : ""} disabled={busy} onClick={() => { setMode("install"); clearPreview(); setError(""); }}>安装</button>
-      <button type="button" className={mode === "update" ? "active" : ""} disabled={busy} onClick={() => { setMode("update"); clearPreview(); setError(""); }}>更新</button>
-      <button type="button" className={mode === "uninstall" ? "active" : ""} disabled={busy} onClick={() => { setMode("uninstall"); clearPreview(); setError(""); }}>卸载</button>
-    </nav>
-      <div className="project-row"><span className="section-inline-label">项目</span>
-        <Dropdown label="项目" className="project-dropdown" value={status?.root} onChange={selectProject} disabled={busy || unavailable}
-          placeholder={projects.length ? "请选择项目" : "请先添加项目"} emptyLabel="暂无项目"
-          options={projects.map((item) => ({ value: item.root, label: item.root.split(/[\\/]/).filter(Boolean).at(-1) ?? item.root,
-            description: item.error ? `${item.root} · 路径不可用` : item.root, disabled: !!item.error }))} />
-      </div>
-      {status && <div className={`project-status ${status.installed ? status.valid ? "installed" : "invalid" : "empty"}`}>
-        {status.installed ? status.valid ? `已安装 · ${platformLabel(status.targets)}${status.version ? ` · ${status.version}` : ""}` : "规则状态需处理" : "未安装规则"}
-      </div>}
-      {mode === "install" ? <>
-        <section className="selection-section" aria-labelledby="stack-heading"><h2 id="stack-heading">技术栈</h2><div className="choice-grid stack-grid" role="radiogroup" aria-label="技术栈">
-          {stacks.map((item) => <Choice key={item.id} item={item} selected={stackId === item.id} disabled={busy || !!status?.installed} onSelect={() => setStackId(item.id)} />)}
-        </div></section>
-        <section className="selection-section platform-section" aria-labelledby="platform-heading"><h2 id="platform-heading">平台（可多选）</h2><div className="choice-grid platform-grid" role="group" aria-label="目标平台">
-          {platforms.map((item) => <Choice key={item.id} item={item} multi selected={platformIds.includes(item.id)} disabled={busy || !!status?.installed}
-            onSelect={() => togglePlatform(item.id)} />)}
-        </div></section>
-      </> : <section className="selection-section uninstall-section"><h2>已安装规则</h2>
-        <div className="uninstall-card">{status?.installed ? <><strong>{platformLabel(status.targets)} · {status.version ?? "版本未知"}</strong><span>{status.rulepacks.map((id) => packNames[id] ?? id).join(" · ") || "规则包信息无法读取"}</span></> : <span>{status ? "该项目没有安装规则" : "选择已安装规则的项目"}</span>}</div>
-        {mode === "update" && status?.installed && <div className="platform-edit"><h2>平台（可调整）</h2><div className="choice-grid platform-grid" role="group" aria-label="更新目标平台">
-          {platforms.map((item) => <Choice key={item.id} item={item} multi selected={platformIds.includes(item.id)} disabled={busy || !status.valid} onSelect={() => togglePlatform(item.id)} />)}
-        </div></div>}
-        {mode === "update" && updateCheck && <p className="update-result">{updateCheck.targetsChanged ? `平台选择有变更 · 规则版本 ${updateCheck.latestVersion}` : updateCheck.available ? `当前 ${updateCheck.currentVersion} → 最新 ${updateCheck.latestVersion}` : `当前 ${updateCheck.currentVersion} · 已是最新版本`}</p>}
-        {status?.issues.map((issue) => <p className="inline-issue" key={issue.code + issue.message}>{issue.message}</p>)}
-      </section>}
-      {error && <div className="error" role="alert"><WarningCircle size={20} />{error}</div>}
-      {notice && <div className="notice" role="status"><CheckCircle size={20} />{notice}</div>}
-      {unavailable && <div className="error" role="alert">请在桌面应用中打开此页面。</div>}
-    </main>
-    <footer className="app-footer">
-      <button type="button" className={`primary-button${mode === "uninstall" ? " danger-button" : ""}`} onClick={mode === "update" && !updateCheck?.available ? checkForUpdate : openPreview} disabled={cannotPreview}>
-        {busy ? "处理中…" : mode === "install" ? "安装" : mode === "update" ? updateCheck?.available ? "查看变更" : "检查更新" : "卸载"}
-      </button></footer>
-    </>}
-    {preview && <PreviewDialog preview={preview} busy={busy} onClose={() => { if (!busy) clearPreview(); }} onApply={apply} />}
-    {softwareError && <div className="software-error" role="alert">{softwareError}</div>}
-  </div>;
+
+  function handleChangeSourceKind(nextKind: "github" | "workspace"): void {
+    setSourceKind(nextKind);
+    setSelectedRulepacks((current) => filterPacksForSource(current, nextKind, workspaceSource));
+    setNotice("");
+  }
+
+  function selectRegisteredSource(src: AssetSourceRecord): void {
+    if (src.access === "github-release") {
+      handleChangeSourceKind("github");
+      return;
+    }
+    const targetDir = src.access === "local" ? src.location : src.localCheckoutPath;
+    if (!targetDir) {
+      setError("请先在「来源管理」同步该 Git 来源");
+      return;
+    }
+    void run(async () => {
+      const info = await api().inspectWorkspaceSource(targetDir);
+      setWorkspaceSource(info);
+      setSourceKind("workspace");
+      setSelectedRulepacks((current) => filterPacksForSource(current, "workspace", info));
+      setNotice(`已切换至 ${src.name}（${info.packs.length} 个规则包）`);
+    });
+  }
+
+  function toggleRulepack(packId: string): void {
+    if (enterpriseRequiredPacks.has(packId)) return;
+    setSelectedRulepacks((current) =>
+      current.includes(packId) ? current.filter((item) => item !== packId) : [...current, packId],
+    );
+    setUpdateCheck(undefined);
+    setNotice("");
+  }
+
+  function applyRecommendation(): void {
+    if (!status) return;
+    setSelectedRulepacks(filterPacksForSource(status.recommendedRulepacks, sourceKind, workspaceSource));
+    setNotice("已套用检测推荐规则包");
+  }
+
+  function toggleTarget(target: PlatformChoice): void {
+    setSelectedTargets((current) =>
+      current.includes(target) ? current.filter((item) => item !== target) : [...current, target],
+    );
+    setUpdateCheck(undefined);
+    setNotice("");
+  }
+
+  function checkForUpdate(): void {
+    void run(async () => {
+      if (!status) throw new Error("请先选择项目文件夹");
+      const result = await api().checkUpdate(selectedTargets, selectedRulepacks);
+      setUpdateCheck(result);
+      setNotice(
+        result.rulepacksChanged
+          ? "规则包配置已变更，可查看变更"
+          : result.targetsChanged
+            ? "适用工具已变更，可查看变更"
+            : result.available
+              ? `发现可更新版本 ${result.latestVersion}`
+              : "已是最新版本",
+      );
+    });
+  }
+
+  function openPreview(): void {
+    void run(async () => {
+      if (!status) throw new Error("请先选择项目文件夹");
+      if (mode === "install") {
+        const source =
+          sourceKind === "workspace"
+            ? workspaceSource
+              ? { type: "workspace" as const, path: workspaceSource.root }
+              : (() => {
+                  throw new Error("请先选择本地规则源目录");
+                })()
+            : { type: "github" as const };
+        setPreview(
+          await api().previewInstall({
+            rulepacks: selectedRulepacks,
+            targets: selectedTargets,
+            source,
+          }),
+        );
+      } else if (mode === "update") {
+        setPreview(await api().previewUpdate());
+      } else {
+        setPreview(await api().previewUninstall());
+      }
+    });
+  }
+
+  function applyPreview(): void {
+    if (!preview) return;
+    void run(async () => {
+      const result =
+        preview.kind === "install"
+          ? await api().applyInstall()
+          : preview.kind === "update"
+            ? await api().applyUpdate()
+            : await api().applyUninstall();
+      setStatus(result);
+      setSelectedTargets(result.installed ? result.targets : ["codex"]);
+      setSelectedRulepacks(
+        result.installed
+          ? result.rulepacks
+          : filterPacksForSource(result.recommendedRulepacks, sourceKind, workspaceSource),
+      );
+      setPreview(undefined);
+      setUpdateCheck(undefined);
+      setProjects(await api().listProjects());
+      setNotice(preview.kind === "install" ? "安装完成" : preview.kind === "update" ? "更新完成" : "卸载完成");
+      if (!result.valid && result.installed) {
+        setError(result.issues.map((item) => item.message).join("；"));
+      }
+    });
+  }
+
+  function softwareAction(): void {
+    const desktop = window.zhishu;
+    if (!desktop || softwareBusy) return;
+    setSoftwareBusy(true);
+    setSoftwareError("");
+    void (async () => {
+      try {
+        if (softwareState?.phase === "manual") return await desktop.openSoftwareDownload();
+        if (softwareState?.phase === "ready") return await desktop.installSoftwareUpdate();
+        let state = softwareState;
+        if (!state || state.phase === "idle" || state.phase === "current" || state.phase === "error") {
+          state = await desktop.checkSoftwareUpdate();
+        }
+        if (state.phase === "manual") return await desktop.openSoftwareDownload();
+        if (state.phase === "error") {
+          setSoftwareError(state.message ?? "检查软件版本失败");
+          return;
+        }
+        if (state.phase !== "available") return;
+        state = await desktop.downloadSoftwareUpdate();
+        if (state.phase === "ready") await desktop.installSoftwareUpdate();
+        else if (state.phase === "error") setSoftwareError(state.message ?? "下载软件更新失败");
+      } catch (problem) {
+        setSoftwareError(formatErrorMessage(problem));
+      } finally {
+        setSoftwareBusy(false);
+      }
+    })();
+  }
+
+  const hasSoftwareUpdate =
+    softwareState?.phase === "available" ||
+    softwareState?.phase === "manual" ||
+    softwareState?.phase === "downloading" ||
+    softwareState?.phase === "ready" ||
+    (softwareState?.phase === "error" && !!softwareState.availableVersion);
+  const softwareLabel =
+    softwareState?.phase === "ready"
+      ? APP_COPY.actions.restartUpdate
+      : softwareState?.phase === "downloading"
+        ? `下载 ${softwareState.percent ?? 0}%`
+        : softwareState?.phase === "error" && softwareState.availableVersion
+          ? APP_COPY.actions.retryUpdate
+          : hasSoftwareUpdate
+            ? APP_COPY.actions.downloadUpdate
+            : softwareState?.phase === "checking"
+              ? "检查中…"
+              : APP_COPY.actions.checkSoftwareUpdate;
+
+  function navigateTo(next: ActiveView): void {
+    clearPreview();
+    setError("");
+    setNotice("");
+    setView(next);
+  }
+
+  return (
+    <div className="shell">
+      <aside className="sidebar" aria-label="主导航">
+        <div className="sidebar-brand">
+          <ZhiShuMark size={32} />
+          <div className="sidebar-brand-text">
+            <span className="sidebar-brand-name">{APP_COPY.brandName}</span>
+            <span className="sidebar-brand-sub">{APP_COPY.brandEn}</span>
+          </div>
+        </div>
+
+        <nav className="sidebar-nav">
+          <button
+            type="button"
+            className={`sidebar-nav-item${view === "projects" || view === "rules" ? " active" : ""}`}
+            disabled={busy}
+            onClick={() => navigateTo("projects")}
+          >
+            <FolderSimple size={17} aria-hidden="true" />
+            <span className="sidebar-nav-label">{APP_COPY.nav.projects}</span>
+            <span className="sidebar-nav-count">{projects.length}</span>
+          </button>
+
+          <button
+            type="button"
+            className={`sidebar-nav-item${view === "assets" ? " active" : ""}`}
+            disabled={busy}
+            onClick={() => navigateTo("assets")}
+          >
+            <SquaresFour size={17} aria-hidden="true" />
+            <span className="sidebar-nav-label">{APP_COPY.nav.assets}</span>
+          </button>
+
+          <button
+            type="button"
+            className={`sidebar-nav-item${view === "tools" ? " active" : ""}`}
+            disabled={busy}
+            onClick={() => navigateTo("tools")}
+          >
+            <Cpu size={17} aria-hidden="true" />
+            <span className="sidebar-nav-label">{APP_COPY.nav.tools}</span>
+          </button>
+
+          <button
+            type="button"
+            className={`sidebar-nav-item${view === "sources" ? " active" : ""}`}
+            disabled={busy}
+            onClick={() => navigateTo("sources")}
+          >
+            <Database size={17} aria-hidden="true" />
+            <span className="sidebar-nav-label">{APP_COPY.nav.sources}</span>
+            {sources.some((src) => src.tier === "enterprise") && (
+              <span className="sidebar-nav-count">企业</span>
+            )}
+          </button>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="version-card">
+            <div className="version-card-row">
+              <span className="version-tag">v{softwareState?.currentVersion ?? "2.0.0"}</span>
+              {hasSoftwareUpdate && softwareState?.availableVersion && (
+                <span className="badge badge--brand">v{softwareState.availableVersion}</span>
+              )}
+              {!hasSoftwareUpdate && softwareState?.phase === "current" && (
+                <span className="badge badge--success">最新</span>
+              )}
+            </div>
+            {!unavailable && (
+              <button
+                type="button"
+                className={`version-action${hasSoftwareUpdate ? " has-update" : ""}`}
+                onClick={softwareAction}
+                disabled={softwareBusy || softwareState?.phase === "downloading" || softwareState?.phase === "checking"}
+                title={softwareError || softwareState?.message || undefined}
+              >
+                <ArrowClockwise size={13} aria-hidden="true" />
+                {softwareLabel}
+              </button>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      <main className="workspace">
+        {view === "projects" && (
+          <ProjectsPage
+            projects={projects}
+            currentRoot={status?.root}
+            busy={busy}
+            unavailable={unavailable}
+            error={error}
+            notice={notice}
+            onAddProject={() => chooseProject(false)}
+            onSelectProject={selectProject}
+            onRecoverProject={(root) => recoverProject(root)}
+            onForgetProject={forgetProject}
+          />
+        )}
+
+        {view === "rules" && (
+          <ProjectRulesPage
+            projects={projects}
+            sources={sources}
+            enterpriseRequiredPacks={enterpriseRequiredPacks}
+            status={status}
+            mode={mode}
+            sourceKind={sourceKind}
+            workspaceSource={workspaceSource}
+            selectedRulepacks={selectedRulepacks}
+            selectedTargets={selectedTargets}
+            updateCheck={updateCheck}
+            busy={busy}
+            unavailable={unavailable}
+            error={error}
+            notice={notice}
+            onBackToProjects={() => navigateTo("projects")}
+            onSelectProject={selectProject}
+            onChangeMode={(nextMode) => {
+              setMode(nextMode);
+              clearPreview();
+              setError("");
+              setNotice("");
+            }}
+            onChangeSourceKind={handleChangeSourceKind}
+            onSelectRegisteredSource={selectRegisteredSource}
+            onChooseWorkspaceSource={chooseWorkspaceSource}
+            onToggleRulepack={toggleRulepack}
+            onApplyRecommendation={applyRecommendation}
+            onToggleTarget={toggleTarget}
+            onRecover={() => recoverProject(status?.root)}
+            onCheckUpdate={checkForUpdate}
+            onOpenPreview={openPreview}
+          />
+        )}
+
+        {view === "assets" && <AssetsPage api={window.zhishu} />}
+
+        {view === "tools" && (
+          <ToolsPage api={window.zhishu} onOpenAssets={() => navigateTo("assets")} />
+        )}
+
+        {view === "sources" && (
+          <SourcesPage
+            api={window.zhishu}
+            sources={sources}
+            workspaceSource={workspaceSource}
+            onSourcesChange={setSources}
+            onChooseWorkspaceSource={chooseWorkspaceSource}
+            onOpenAssets={() => navigateTo("assets")}
+          />
+        )}
+      </main>
+
+      {preview && (
+        <PreviewDialog
+          key={`${preview.kind}:${preview.root}`}
+          preview={preview}
+          busy={busy}
+          onClose={() => {
+            if (!busy) clearPreview();
+          }}
+          onApply={applyPreview}
+        />
+      )}
+
+      {softwareError && (
+        <div className="software-toast" role="alert">
+          {softwareError}
+        </div>
+      )}
+    </div>
+  );
 }

@@ -7,6 +7,8 @@
 
 ## 1. RESTful 规范
 
+> 跨语言、跨端通用的契约先行、字段/时间/金额对齐、错误码与 `requestId`、并行联调及向下兼容红线见 [03 - 跨端接口契约与联调规范](../../common/03-跨端接口契约与联调规范.md)；本文件聚焦 Java Web/API 落地细则。
+
 ### 1.1 资源命名
 
 🟡 **推荐**：
@@ -158,7 +160,7 @@ public ApiResponse<OrderDTO> createOrder(@Valid @RequestBody CreateOrderRequest 
 
 🟡 **推荐**：
 
-- 见 见 03-异常处理规则 § 6.3
+- 见 `03-异常处理规则 § 6.3`
 - **业务异常直接 throw**，由 `@ControllerAdvice` 统一处理
 
 ### 2.4 接收参数方式
@@ -300,7 +302,7 @@ public class UserDTO {
 🟡 **推荐**：
 
 - 用 `@ControllerAdvice` + `@ExceptionHandler(MethodArgumentNotValidException.class)` 统一处理
-- 详见 见 03-异常处理规则 § 6.1
+- 详见 `03-异常处理规则 § 6.1`
 
 ### 3.6 SQL 注入防御
 
@@ -314,20 +316,20 @@ public class UserDTO {
     @Query("SELECT u FROM User u WHERE u.name = :name")
     List<User> findByName(@Param("name") String name);
     ```
-- **MyBatis 用 `#{}` 不 `${}`**（见 见 07 §3）
+- **MyBatis 用 `#{}` 不 `${}`**（见 `07-数据访问规则 § 6.1`）
 
-### 3.7 XSS 与 SQL 注入 URL 重定向
+### 3.7 XSS 与开放重定向
 
-🟡 **推荐**（安全性已经在 见 12 详述，这里跟 Web 接口层相关的几点）：
+🟡 **推荐**（完整安全规范见 `12-安全规则.md`，以下为 Web 接口层重点）：
 
-- 用户输入校验（`@Valid` 已经做）
-- 输出到 HTML 时转义（Spring 默认 Escape）
-- 重定向到用户可控 URL 时禁止（防止开放重定向漏洞）
+- 用户输入校验（`@Valid` 配合业务规则）
+- 输出到 HTML 时按上下文转义（或由前端模板/框架默认转义）
+- 禁止无校验重定向到用户可控 URL（使用白名单或相对路径，防止开放重定向漏洞）
 
 
 ## 4. 统一响应格式
 
-详细 `ApiResponse` 设计见 见 03-异常处理规则 § 6.2。这里补充 **Web 层的统一响应规范**。
+详细 `ApiResponse` 设计见 `03-异常处理规则 § 6.2`。以下规范遵循项目既定 API 契约（若项目采用直出 REST 响应或 RFC 9457 Problem Details，按项目约定保持一致）。
 
 ### 4.1 包装 vs 不包装
 
@@ -374,10 +376,11 @@ public class PageResponse<T> {
     private long total;          // 总记录数
     private int page;            // 当前页（1-indexed）
     private int size;            // 每页大小
-    private int totalPages;      // 总页数（计算属性）
 
-    @JsonIgnore
-    public int getTotalPages() { return (int) Math.ceil((double) total / size); }
+    /** 计算总页数，防御 size <= 0 导致除零 */
+    public int getTotalPages() {
+        return size <= 0 ? 0 : (int) Math.ceil((double) total / size);
+    }
 }
 ```
 
@@ -401,9 +404,9 @@ public ApiResponse<PageResponse<OrderDTO>> list(
 
 🟡 **推荐**：
 
-- **业务错误用 HTTP 200 + 业务码表达**（如库存不足返回 `"30102"`）
-- **HTTP 层面错误用对应 HTTP 状态码**（如 401 / 403 / 404 / 500）
-- 详见 见 03-异常处理规则 § 6.4
+- 遵循项目既定 API 契约并保持全局一致：统一包装模式下**业务错误用 HTTP 200 + 业务码**（或按 REST 契约返回语义化 4xx）
+- **HTTP 协议/认证/权限/系统级错误使用对应 HTTP 状态码**（如 400 / 401 / 403 / 404 / 500）
+- 详见 `03-异常处理规则 § 6.4`
 
 ### 4.5 二进制接口（文件下载 / 上传）
 
@@ -420,11 +423,11 @@ public ApiResponse<PageResponse<OrderDTO>> list(
 🟡 **推荐**：Spring Boot 3.x 项目用 **springdoc-openapi**（springfox 已停止维护）：
 
 ```xml
-<!-- pom.xml -->
+<!-- pom.xml（仅在项目采用 OpenAPI 文档且获授权时引入） -->
 <dependency>
     <groupId>org.springdoc</groupId>
     <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-    <version>2.5.0</version>
+    <version>${springdoc.version}</version><!-- 使用 <项目锁定版本> -->
 </dependency>
 ```
 
@@ -442,7 +445,7 @@ public ApiResponse<PageResponse<OrderDTO>> list(
 | `@Schema` | DTO 类 / 字段 | `@Schema(description = "用户 ID") Long userId` |
 | `@ApiResponses` | 多种响应 | 见下 |
 
-**正例**：
+**正例**（注意避开 OpenAPI `@ApiResponse` 注解与自定义响应类 `ApiResponse` 同名冲突，可用全限定注解或为包装类取 `Result` / `ApiResult`）：
 ```java
 @RestController
 @RequestMapping("/api/v1/orders")
@@ -454,9 +457,9 @@ public class OrderController {
         description = "传入订单明细，返回订单 ID"
     )
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "创建成功"),
-        @ApiResponse(responseCode = "400", description = "参数错误"),
-        @ApiResponse(responseCode = "500", description = "服务器错误")
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "创建成功"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "参数错误"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "服务器错误")
     })
     @PostMapping
     public ApiResponse<OrderDTO> create(
@@ -545,10 +548,10 @@ public ApiResponse<Void> delete(@PathVariable Long id) { ... }
 🟡 **推荐**：
 
 ```java
-// 1. 前端进入页面时获取 token（用户不可见）
+// 1. 前端进入页面时获取 token（用户身份必须取自已认证主体，严禁信任客户端传入的 userId 请求头）
 @GetMapping("/idempotent-token")
-public ApiResponse<String> generateToken(@RequestHeader("userId") Long userId) {
-    String token = idempotentService.generate(userId);
+public ApiResponse<String> generateToken(@AuthenticationPrincipal LoginUser currentUser) {
+    String token = idempotentService.generate(currentUser.getUserId());
     return ApiResponse.ok(token);
 }
 
@@ -651,33 +654,35 @@ ALTER TABLE orders ADD UNIQUE INDEX uk_order_no (order_no);
 
 ### 7.4 Sentinel 注解限流
 
-🟡 **推荐**（阿里 Sentinel，Java 生态最常用）：
+🟡 **推荐**（如项目采用 Sentinel，注意 `blockHandler` 返回类型与原方法签名必须完全一致，HTTP 状态码 `429` 建议通过 `ResponseEntity` 或 `BlockExceptionHandler` 统一返回）：
 
 ```java
 @GetMapping("/orders")
 @SentinelResource(
     value = "listOrders",
-    blockHandler = "listOrdersBlock"  // 限流时回调
+    blockHandler = "listOrdersBlock"  // 限流时回调，签名与返回类型需与原方法匹配
 )
-public ApiResponse<PageResponse<OrderDTO>> list(
+public ResponseEntity<ApiResponse<PageResponse<OrderDTO>>> list(
     @RequestParam(defaultValue = "1") int page,
     @RequestParam(defaultValue = "20") int size) {
-    return ApiResponse.ok(orderService.list(page, size));
+    return ResponseEntity.ok(ApiResponse.ok(orderService.list(page, size)));
 }
 
-// 限流 / 降级回调
-public ApiResponse<Void> listOrdersBlock(int page, int size, BlockException ex) {
-    return ApiResponse.fail("50901", "接口访问过于频繁，请稍后再试");
+// 限流 / 降级回调（返回类型须与原方法一致，且 HTTP 状态码为 429）
+public ResponseEntity<ApiResponse<PageResponse<OrderDTO>>> listOrdersBlock(
+    int page, int size, BlockException ex) {
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+        .body(ApiResponse.fail("50901", "接口访问过于频繁，请稍后再试"));
 }
 ```
 
 ### 7.5 限流阈值
 
-🟡 **推荐**：接口限流阈值的判断：
+🟡 **推荐**：接口限流阈值应结合压测容量、依赖瓶颈与安全威胁模型配置，禁止写死拍脑袋数值：
 
-- **内部接口**：1000 QPS 起，根据系统容量调整
-- **外部 API**：按业务场景（如登录 100 QPS / IP，注册 5 QPS / IP）
-- **核心接口**：设高（如支付 100 QPS），非核心设低（如导出报表 1 QPS / 用户）
+- **认证/防刷接口（登录、注册、短信验证码）**：必须执行严格的按账号 + 按 IP 低频限流与失败锁定（见 `12-安全规则.md`），不可放宽为高 QPS
+- **核心读写接口**：结合压测吞吐与下游 DB/RPC 承载能力分级设置（区分全局、接口、用户维度）
+- **高开销接口（导出、复杂统计）**：设置严格的每用户并发与频率上限，防止资源耗尽
 
 ### 7.6 熔断降级
 
@@ -793,5 +798,3 @@ server {
 ```
 
 浏览器请求 `app.example.com/api/orders`，Nginx 转发到后端，**对浏览器来说是同源**（不需要 CORS）。
-
----

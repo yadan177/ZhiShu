@@ -18,17 +18,17 @@ function run(executable, args, cwd = repository) {
 test("独立 npm 包可在六类工程初始化，并完成 Go 工程的显式更新", async () => {
   const npmCli = process.env.npm_execpath;
   assert.ok(npmCli, "测试须通过 npm run check 启动");
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-package-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-package-"));
   try {
-    const packed = JSON.parse(run(process.execPath, [npmCli, "pack", "--workspace", "agentrulekit", "--pack-destination", root, "--json"]));
+    const packed = JSON.parse(run(process.execPath, [npmCli, "pack", "--workspace", "zhishu", "--pack-destination", root, "--json"]));
     assert.ok(packed[0].files.some((file) => file.path === "README.md"), "npm 包必须包含中文安装说明");
     assert.ok(packed[0].files.some((file) => file.path === "LICENSE"), "npm 包必须包含许可证");
     const archive = path.join(root, packed[0].filename);
     const install = path.join(root, "installed");
     run(process.execPath, [npmCli, "install", "--prefix", install, archive, "--ignore-scripts", "--no-audit", "--no-fund"]);
-    const cli = path.join(install, "node_modules", "agentrulekit", "dist", "index.js");
+    const cli = path.join(install, "node_modules", "zhishu", "dist", "index.js");
     assert.equal(run(process.execPath, [cli, "--version"]).trim(), packageVersion);
-    assert.equal(run(process.execPath, [npmCli, "exec", "--prefix", install, "--", "agent-rule", "--version"]).trim(), packageVersion);
+    assert.equal(run(process.execPath, [npmCli, "exec", "--prefix", install, "--", "zhishu", "--version"]).trim(), packageVersion);
     const source = path.join(root, "source");
     await cp(path.join(repository, "rulepacks"), path.join(source, "rulepacks"), { recursive: true });
     const license = await readFile(path.join(repository, "LICENSE"), "utf8");

@@ -52,18 +52,20 @@ npm install --save-dev eslint typescript-eslint
 
 ### 2.1 typescript-eslint 关键规则（按项目启用）
 
-下例适用于已经采用最新版 `typescript-eslint`、使用 flat config 且需要类型化 lint 的项目。生成代码、测试工具配置和性能敏感的超大仓库通常需要单独的 files/ignores 范围。
+下例适用于已经采用最新版 `typescript-eslint`、使用 flat config 且需要类型化 lint 的项目。ESLint 9.22+ 推荐从 `'eslint/config'` 导入 `defineConfig`（旧版 ESLint 9 项目若尚未升级，可继续沿用 `tseslint.config`）。生成代码、测试工具配置和性能敏感的超大仓库通常需要单独的 `files` / `ignores` 范围。
 
 ```js
 // eslint.config.js
+import { defineConfig } from 'eslint/config';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+export default defineConfig(
   ...tseslint.configs.strictTypeChecked,           // 可作为严格类型化 lint 的起点
   {
     languageOptions: {
       parserOptions: {
         projectService: true,                      // 自动发现 tsconfig
+        tsconfigRootDir: import.meta.dirname,
       },
     },
     rules: {
@@ -85,33 +87,52 @@ export default tseslint.config(
       // ====== 类型使用 ======
       '@typescript-eslint/consistent-type-imports': 'error',      // import type
       '@typescript-eslint/no-unused-vars': 'error',
-      '@typescript-eslint/consistent-type-definitions': 'error',
+      // 可选：仅在团队明确约定统一使用 interface 或 type 时按仓库偏好启用
+      // '@typescript-eslint/consistent-type-definitions': ['error', 'interface'],
 
       // ====== 函数 / 模块 ======
       '@typescript-eslint/no-non-null-assertion': 'error',        // 禁用 !
       '@typescript-eslint/prefer-nullish-coalescing': 'error',
       '@typescript-eslint/prefer-optional-chain': 'error',
+      'no-shadow': 'off',                                         // 必须关闭核心规则，避免与 TS 版本重复误报
       '@typescript-eslint/no-shadow': 'error',
     },
+  },
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    extends: [tseslint.configs.disableTypeChecked],               // 对纯 JS 文件关闭类型化规则
   },
 );
 ```
 
 ### 2.2 Flat Config（ESLint 9+ 示例）
 
-仅在项目已使用 ESLint 9+ 与 `typescript-eslint` 时，可按实际框架增量采用。React 插件不能出现在非 React 项目的基础配置中：
+仅在项目已使用 ESLint 9+ 与 `typescript-eslint` 时，可按实际框架增量采用。启用 `strictTypeChecked` 时必须同时配置 `parserOptions.projectService`（或 `project`），并对未纳入 `tsconfig` 的 JS 配置文件通过 `disableTypeChecked` 关闭类型化检查。React 插件不能出现在非 React 项目的基础配置中：
 
 ```js
-// eslint.config.js
+// eslint.config.js（ESLint 9.22+ 使用 defineConfig；更早 ESLint 9 版本可用 tseslint.config）
+import { defineConfig } from 'eslint/config';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettierConfig from 'eslint-config-prettier';
 
-export default tseslint.config(
+export default defineConfig(
+  {
+    ignores: ['dist/', 'build/', 'node_modules/', 'coverage/'],
+  },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
-    ignores: ['dist/', 'build/', 'node_modules/', 'coverage/', '*.config.js'],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    extends: [tseslint.configs.disableTypeChecked],
   },
   prettierConfig,                                    // 仅项目使用 Prettier 时保留
   {
@@ -135,7 +156,7 @@ export default tseslint.config(
 
 仅在项目已经使用或明确决定采用 Git hooks 时配置；CI 仍应保留独立验证，不能依赖开发者本地 hook。
 
-```json
+```jsonc
 // package.json
 {
   "scripts": {
@@ -182,7 +203,7 @@ npx --no-install commitlint --edit "$1"
 
 ### 2.6 VS Code 集成
 
-```json
+```jsonc
 // .vscode/settings.json
 {
   "editor.formatOnSave": true,                       // 保存时格式化
@@ -246,10 +267,24 @@ npm install --save-dev eslint-plugin-react eslint-plugin-react-hooks eslint-plug
 ```
 
 ```js
+import { defineConfig } from 'eslint/config';
+import tseslint from 'typescript-eslint';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 
-export default tseslint.config(
+export default defineConfig(
   ...tseslint.configs.strictTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    extends: [tseslint.configs.disableTypeChecked],
+  },
   reactHooksPlugin.configs['recommended-latest'],   // React Hooks 规则
   {
     rules: {
@@ -259,5 +294,3 @@ export default tseslint.config(
   },
 );
 ```
-
----

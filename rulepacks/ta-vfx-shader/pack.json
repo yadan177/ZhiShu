@@ -1,0 +1,19 @@
+{
+  "$schema": "../../schemas/rulepack.schema.json",
+  "id": "ta-vfx-shader",
+  "version": "2.0.0",
+  "status": "ready",
+  "kind": "development",
+  "entry": "15-AI通用入口规则.md",
+  "dependencies": [
+    "common"
+  ],
+  "rules": [
+    "00-文档总览.md",
+    "15-AI通用入口规则.md",
+    "其他规则/01-URP移动XR渲染管线与合批规范.md",
+    "其他规则/02-VFX特效与Overdraw预算规范.md",
+    "其他规则/03-Shader编写与变体裁剪规范.md",
+    "其他规则/04-资产导入自动化校验与真机剖析规范.md"
+  ]
+}

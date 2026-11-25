@@ -9,7 +9,7 @@ const manual = process.argv.includes("--manual");
 const mac = process.platform === "darwin";
 const windows = process.platform === "win32";
 assert.ok(mac || windows, "仅支持在 macOS 或 Windows 上核对桌面更新资产");
-const basename = mac ? `AgentRuleKit-Desktop-${version}-macOS-arm64` : `AgentRuleKit-Desktop-${version}-Windows-x64`;
+const basename = mac ? `ZhiShu-Desktop-${version}-macOS-arm64` : `ZhiShu-Desktop-${version}-Windows-x64`;
 const required = mac ? [`${basename}.dmg`] : manual ? [`${basename}.exe`] : [`${basename}.exe`, "latest.yml"];
 for (const name of required) assert.ok(existsSync(path.join(root, "release", name)), `缺少更新资产 ${name}`);
 if (windows && !manual) {

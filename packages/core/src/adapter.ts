@@ -3,7 +3,7 @@ import type { ProjectConfig } from "./types.js";
 /** 目标工具负责描述自己的项目入口；核心只处理文件生命周期。 */
 export interface TargetAdapter {
   id: string;
-  /** Several tools can read the same project entry without duplicating rule files. */
+  /** 允许多个兼容工具共用同一个项目入口文件，避免重复写入规则正文。 */
   compatibleTargets?: readonly string[];
   entryFile: string;
   blockStart: string;
@@ -24,7 +24,7 @@ export function assertTargetAdapter(adapter: TargetAdapter): void {
     throw new Error(`目标工具入口必须是工程根目录中的普通文件：${adapter.entryFile}`);
   }
   if (["agent-rules.yaml", ".agent-rules.lock.json"].includes(adapter.entryFile)) {
-    throw new Error(`目标工具入口不能占用 AgentRuleKit 控制文件：${adapter.entryFile}`);
+    throw new Error(`目标工具入口不能占用 智枢控制文件：${adapter.entryFile}`);
   }
   if (!adapter.blockStart || !adapter.blockEnd || adapter.blockStart === adapter.blockEnd) {
     throw new Error("目标工具受控区块边界不合法");
@@ -51,7 +51,7 @@ export function extractManagedBlock(existing: string, adapter: TargetAdapter): s
 export function mergeManagedBlock(existing: string, block: string, adapter: TargetAdapter): string {
   const { start, end, valid } = markerPositions(existing, adapter);
   if (!valid) {
-    throw new Error(`${adapter.entryFile} 包含边界不完整的 AgentRuleKit 受控区块`);
+    throw new Error(`${adapter.entryFile} 包含边界不完整的 智枢受控区块`);
   }
   if (start !== -1) {
     const endOffset = end + adapter.blockEnd.length;

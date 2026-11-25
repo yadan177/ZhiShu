@@ -1,0 +1,26 @@
+{
+  "name": "zhishu-unity-dev",
+  "displayName": "Unity 开发工程师",
+  "version": "2.0.0",
+  "description": "面向 Unity 与 PICO/XR 项目的 C# 代码规范审查、XR 真机性能排障、场景与预制体诊断、打包发布前检查、测试脚本编写与技术文档同步技能套件。",
+  "author": {
+    "name": "智枢官方"
+  },
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Unity 开发工程师"
+  },
+  "ruleCategories": [
+    "common",
+    "unity",
+    "pico",
+    "project-docs/unity",
+    "xr-common"
+  ],
+  "suggestedPrompts": [
+    "按 Unity 与 XR 性能红线审查这段 C# 业务代码的 GC、生命周期与资源释放",
+    "逐项核对 PICO / XR 发布前的构建号、权限、签名、渲染与音频打包检查项",
+    "诊断这个场景和 Prefab 的引用缺失、Override 污染与资源加载隐患"
+  ]
+}

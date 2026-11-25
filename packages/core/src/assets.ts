@@ -1,8 +1,8 @@
 import type { ValidationIssue } from "./types.js";
 
-/** Toolbox catalog entry. An IDE plugin bundle is an adapter output, not this asset. */
+/** 智枢目录资产类型。宿主 IDE 插件包是适配器交付产物，不等同于资产源本身。 */
 export type AssetKind = "skill" | "capability-plugin";
-/** Skills and capability plugins are installed in the selected IDE's user environment. */
+/** Skills 与能力插件安装到所选 AI 工具的本机用户环境，跨项目复用。 */
 export type AssetScope = "ide-user";
 
 export interface AssetManifest {
@@ -28,7 +28,7 @@ export interface InstalledAsset {
   version: string;
   target: AssetTarget;
   installedAt: string;
-  /** Relative path -> SHA-256. Only these files may be updated or removed. */
+  /** 相对路径到 SHA-256 的映射；仅此集合内的受管文件允许被更新或卸载。 */
   managedFiles: Record<string, string>;
 }
 
@@ -52,7 +52,7 @@ export type AssetPlan = AssetPlanBase & (
   | { kind: "uninstall"; manifest?: never; previous: InstalledAsset }
 );
 
-/** IDE-specific delivery is implemented only when a real asset is shipped. */
+/** 具体 IDE 交付适配器仅在对应资产真实交付时实现。 */
 export interface IdeAssetAdapter {
   id: string;
   supportedScopes: readonly AssetScope[];

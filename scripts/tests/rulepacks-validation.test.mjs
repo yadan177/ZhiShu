@@ -7,7 +7,7 @@ import test from "node:test";
 import { validateRulepacks } from "../validate-rulepacks.mjs";
 
 async function withRulepacks(run) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-rulepacks-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-rulepacks-"));
   try { await run(root); }
   finally { await rm(root, { recursive: true, force: true }); }
 }

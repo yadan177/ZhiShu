@@ -1,14 +1,14 @@
-# AI开发工具箱 CLI（AgentRuleKit）
+# 智枢 CLI（zhishu）
 
-`agentrulekit` 是独立 AI 开发工具箱当前的**规则管理 CLI**，为指定项目安装、检查、更新和卸载共享 AI 开发规则。它尚不提供规划中的场景插件库或统一多项目界面。规则正文固定在各项目 Git 中；CLI 安装在个人电脑，Codex 交付包可另行安装。已发布的 `0.1.5` 首版适配 Codex；仓库源码虽支持多个共享 `AGENTS.md` 目标，正式 npm CLI 尚未发布该能力。规则源本身不绑定编辑器。完整产品定位见[产品架构](../../docs/product-architecture.md)。
+`zhishu` 是独立 智枢当前的**规则管理 CLI**，为指定项目安装、检查、更新和卸载共享 AI 开发规则。它尚不提供规划中的场景插件库或统一多项目界面。规则正文固定在各项目 Git 中；CLI 安装在个人电脑，Codex 交付包可另行安装。已发布的 `0.1.5` 首版适配 Codex；仓库源码虽支持多个共享 `AGENTS.md` 目标，正式 npm CLI 尚未发布该能力。规则源本身不绑定编辑器。完整产品定位见 [智枢产品需求文档](../../项目文档/产品文档/智枢-产品需求文档.md)。
 
 需要 Node.js 22 或更高版本，以及访问 GitHub Release 的网络。安装后先在测试工程试用：
 
 ```bash
-npm install -g agentrulekit
-agent-rule detect /absolute/path/to/project
-agent-rule init /absolute/path/to/project
-agent-rule validate /absolute/path/to/project
+npm install -g zhishu
+zhishu detect /absolute/path/to/project
+zhishu init /absolute/path/to/project
+zhishu validate /absolute/path/to/project
 ```
 
 `init` 会从正式 GitHub Release 下载匹配的规则包并校验 SHA-256，然后在工程中生成 `.agent-rules/`、`agent-rules.yaml`、`.agent-rules.lock.json` 和 Codex 的 `AGENTS.md` 入口。运行前请先用 `detect` 确认技术栈，并在安装后审查生成文件、提交到项目 Git。未知文件或已有受管内容冲突时会停止，不会静默覆盖。
@@ -16,10 +16,10 @@ agent-rule validate /absolute/path/to/project
 更新由项目成员控制：
 
 ```bash
-agent-rule check /absolute/path/to/project
-agent-rule diff /absolute/path/to/project
-agent-rule update /absolute/path/to/project --apply
-agent-rule validate /absolute/path/to/project
+zhishu check /absolute/path/to/project
+zhishu diff /absolute/path/to/project
+zhishu update /absolute/path/to/project --apply
+zhishu validate /absolute/path/to/project
 ```
 
 `check` 和 `diff` 不修改工程；`update` 默认只预览，只有加 `--apply` 才写入。项目本地覆盖规则放在 `.agent-rules/overrides.md`，更新时会保留。请先审查差异，再决定是否应用并提交 Git。
@@ -27,11 +27,11 @@ agent-rule validate /absolute/path/to/project
 卸载业务项目中的规则也需先预览，再显式应用；这不会卸载个人 CLI 或 Codex 插件：
 
 ```bash
-agent-rule uninstall /absolute/path/to/project
-agent-rule uninstall /absolute/path/to/project --details
-agent-rule uninstall /absolute/path/to/project --apply
+zhishu uninstall /absolute/path/to/project
+zhishu uninstall /absolute/path/to/project --details
+zhishu uninstall /absolute/path/to/project --apply
 ```
 
-默认只显示待删除文件数量、`AGENTS.md` 的处理方式和保留文件清单；需要逐行差异时再加 `--details`。`--apply` 会重新核对计划后才卸载，成功时只显示简短结果。卸载仅删除经锁文件确认的受管规则、项目配置和锁文件，并移除 `AGENTS.md` 的 AgentRuleKit 区块。项目本地覆盖规则及其他非受管文件原地保留；卸载无需联网。
+默认只显示待删除文件数量、`AGENTS.md` 的处理方式和保留文件清单；需要逐行差异时再加 `--details`。`--apply` 会重新核对计划后才卸载，成功时只显示简短结果。卸载仅删除经锁文件确认的受管规则、项目配置和锁文件，并移除 `AGENTS.md` 的 智枢区块。项目本地覆盖规则及其他非受管文件原地保留；卸载无需联网。
 
-完整说明、Codex 插件安装方法及恢复流程见 [AgentRuleKit 安装与更新文档](https://github.com/yadan177/AgentRuleKit/blob/main/docs/installation.md)。源码与问题反馈：[AgentRuleKit](https://github.com/yadan177/AgentRuleKit)。
+完整说明及恢复流程见 [安装与更新指南](../../项目文档/技术文档/安装与更新指南.md)。源码与问题反馈：[ZhiShu](https://github.com/yadan177/ZhiShu)。

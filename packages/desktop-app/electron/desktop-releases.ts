@@ -14,7 +14,7 @@ type GithubRelease = {
   assets?: unknown;
 };
 
-const repository = "yadan177/AgentRuleKit";
+const repository = "yadan177/ZhiShu";
 const releaseTag = /^desktop-v(\d+)\.(\d+)\.(\d+)$/;
 
 function parts(version: string): number[] | undefined {
@@ -35,15 +35,15 @@ export function compareDesktopVersions(left: string, right: string): number {
 export function matchesUpdateInfo(info: { version?: unknown; files?: { url?: unknown }[] }, version: string, platform: NodeJS.Platform, arch: string): boolean {
   if (platform !== "win32" || arch !== "x64") return false;
   if (info.version !== version || !Array.isArray(info.files)) return false;
-  const expected = `AgentRuleKit-Desktop-${version}-Windows-x64.exe`;
+  const expected = `ZhiShu-Desktop-${version}-Windows-x64.exe`;
   const names = info.files.map((file) => file?.url);
   if (!names.includes(expected)) return false;
   return names.every((name) => name === expected);
 }
 
 function installerName(version: string, platform: NodeJS.Platform, arch: string): string | undefined {
-  if (platform === "darwin" && arch === "arm64") return `AgentRuleKit-Desktop-${version}-macOS-arm64.dmg`;
-  if (platform === "win32" && arch === "x64") return `AgentRuleKit-Desktop-${version}-Windows-x64.exe`;
+  if (platform === "darwin" && arch === "arm64") return `ZhiShu-Desktop-${version}-macOS-arm64.dmg`;
+  if (platform === "win32" && arch === "x64") return `ZhiShu-Desktop-${version}-Windows-x64.exe`;
   return undefined;
 }
 
@@ -75,7 +75,7 @@ export function selectDesktopRelease(data: unknown, platform: NodeJS.Platform, a
 
 export async function fetchDesktopRelease(platform: NodeJS.Platform, arch: string, fetcher: typeof fetch = fetch): Promise<DesktopRelease | undefined> {
   const response = await fetcher(`https://api.github.com/repos/${repository}/releases?per_page=100`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "AgentRuleKit-Desktop" },
+    headers: { Accept: "application/vnd.github+json", "User-Agent": "ZhiShu-Desktop" },
     signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) throw new Error(`检查软件版本失败（HTTP ${response.status}）`);

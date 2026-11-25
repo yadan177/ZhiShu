@@ -16,11 +16,13 @@ export type SoftwareUpdateState = {
 function canInstallAutomatically(): boolean {
   if (!app.isPackaged || process.platform !== "win32") return false;
   try {
-    const status = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "(Get-AuthenticodeSignature -LiteralPath $env:AGENTRULEKIT_APP_EXE).Status"], {
-      env: { ...process.env, AGENTRULEKIT_APP_EXE: process.execPath }, timeout: 10000, encoding: "utf8", windowsHide: true,
+    const status = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "(Get-AuthenticodeSignature -LiteralPath $env:ZHISHU_APP_EXE).Status"], {
+      env: { ...process.env, ZHISHU_APP_EXE: process.execPath }, timeout: 10000, encoding: "utf8", windowsHide: true,
     });
     return status.trim() === "Valid";
-  } catch { /* 无法确认签名时只允许手动安装。 */ }
+  } catch {
+    // 无法确认签名时降级为手动安装。
+  }
   return false;
 }
 
@@ -110,6 +112,15 @@ export class SoftwareUpdateService {
 
   async openDownloadPage(): Promise<void> {
     if (this.state.phase !== "manual" || !this.release) throw new Error("当前没有可手动安装的软件更新");
-    await shell.openExternal(this.release.downloadUrl);
+    let parsed: URL;
+    try {
+      parsed = new URL(this.release.downloadUrl);
+    } catch {
+      throw new Error("软件下载地址格式无效");
+    }
+    if (parsed.protocol !== "https:" || parsed.hostname !== "github.com") {
+      throw new Error("软件下载地址不在受信任的 HTTPS 来源范围内");
+    }
+    await shell.openExternal(parsed.toString());
   }
 }

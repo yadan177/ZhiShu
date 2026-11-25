@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentrulekit.dev/schemas/project-lock.schema.json",
-  "title": "AgentRuleKit project lock",
+  "$id": "https://zhishu.dev/schemas/project-lock.schema.json",
+  "title": "ZhiShu project lock",
   "type": "object",
   "required": ["schemaVersion", "toolkitVersion", "sourceType", "source", "rulepacks", "targets", "managedFiles", "managedBlockDigest"],
   "properties": {

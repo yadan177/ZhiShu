@@ -12,7 +12,7 @@ interface RegistryFile {
   projects: RegisteredProject[];
 }
 
-/** Personal toolbox state. Project rule files remain the authority for each project's rules. */
+/** 智枢本机项目路径登记表；各业务项目的规则真相始终以项目内文件为准。 */
 export class ProjectRegistry {
   private pendingWrite: Promise<void> = Promise.resolve();
   constructor(private readonly file: string) {}
@@ -32,8 +32,8 @@ export class ProjectRegistry {
     }
     let value: unknown;
     try { value = JSON.parse(content); }
-    catch { throw new Error("工具箱项目列表已损坏；请备份并检查数据文件，未覆盖原内容"); }
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("工具箱项目列表格式不正确，未覆盖原内容");
+    catch { throw new Error("智枢项目列表已损坏；请备份并检查数据文件，未覆盖原内容"); }
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("智枢项目列表格式不正确，未覆盖原内容");
     const data = value as Partial<RegistryFile>;
     if (Object.keys(data).some((key) => !["schemaVersion", "projects"].includes(key)) ||
       data.schemaVersion !== 1 || !Array.isArray(data.projects) ||
@@ -41,7 +41,7 @@ export class ProjectRegistry {
         typeof item.addedAt !== "string" || Number.isNaN(Date.parse(item.addedAt)) ||
         Object.keys(item).some((key) => !["root", "addedAt"].includes(key))) ||
       new Set(data.projects.map((item) => item.root)).size !== data.projects.length) {
-      throw new Error("工具箱项目列表版本或内容不受支持，未覆盖原内容");
+      throw new Error("智枢项目列表版本或内容不受支持，未覆盖原内容");
     }
     return { schemaVersion: 1, projects: data.projects };
   }
@@ -76,7 +76,7 @@ export class ProjectRegistry {
     return this.serialize(async () => {
     const data = await this.read();
     const next = data.projects.filter((item) => item.root !== root);
-    if (next.length === data.projects.length) throw new Error("项目不在工具箱列表中");
+    if (next.length === data.projects.length) throw new Error("项目不在智枢列表中");
     data.projects = next;
     await this.write(data);
     return next;

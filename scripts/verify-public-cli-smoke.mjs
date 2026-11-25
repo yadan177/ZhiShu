@@ -23,20 +23,20 @@ function run(executable, args, cwd = repository) {
 
 const npmCli = process.env.npm_execpath;
 assert.ok(npmCli, "请通过 npm run smoke:public 或 npm run smoke:npm 启动");
-const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-public-smoke-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-public-smoke-"));
 
 try {
   const install = path.join(root, "installed");
   if (fromNpm) {
-    run(process.execPath, [npmCli, "install", "--prefix", install, `agentrulekit@${expectedVersion}`, "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-online"]);
+    run(process.execPath, [npmCli, "install", "--prefix", install, `zhishu@${expectedVersion}`, "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-online"]);
   } else {
-    const packed = JSON.parse(run(process.execPath, [npmCli, "pack", "--workspace", "agentrulekit", "--pack-destination", root, "--json"]));
+    const packed = JSON.parse(run(process.execPath, [npmCli, "pack", "--workspace", "zhishu", "--pack-destination", root, "--json"]));
     const archive = path.join(root, packed[0].filename);
     run(process.execPath, [npmCli, "install", "--prefix", install, archive, "--ignore-scripts", "--no-audit", "--no-fund"]);
   }
-  const cli = path.join(install, "node_modules", "agentrulekit", "dist", "index.js");
+  const cli = path.join(install, "node_modules", "zhishu", "dist", "index.js");
   assert.equal(run(process.execPath, [cli, "--version"]).trim(), expectedVersion);
-  assert.equal(run(process.execPath, [npmCli, "exec", "--prefix", install, "--", "agent-rule", "--version"]).trim(), expectedVersion);
+  assert.equal(run(process.execPath, [npmCli, "exec", "--prefix", install, "--", "zhishu", "--version"]).trim(), expectedVersion);
 
   const fixtures = [
     { name: "go", marker: "go.mod", content: "module example.com/smoke\n\ngo 1.22\n", packs: ["common", "go", "project-docs/go"] },
@@ -56,7 +56,7 @@ try {
 
     const lock = JSON.parse(await readFile(path.join(project, ".agent-rules.lock.json"), "utf8"));
     assert.equal(lock.sourceType, "github");
-    assert.equal(lock.source, "yadan177/AgentRuleKit");
+    assert.equal(lock.source, "yadan177/ZhiShu");
     assert.equal(lock.sourceVersion, expectedVersion);
     assert.match(lock.sourceDigest, /^sha256:[a-f0-9]{64}$/);
     assert.match(lock.sourceCommit, /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/);

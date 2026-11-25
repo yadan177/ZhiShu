@@ -7,6 +7,7 @@ if (($# > 0)); then
   roots=("$@")
 else
   roots=(
+    "$repo_root/rulepacks/common"
     "$repo_root/rulepacks/javascript"
     "$repo_root/rulepacks/typescript"
     "$repo_root/rulepacks/python"
@@ -16,6 +17,10 @@ else
     "$repo_root/rulepacks/pico"
     "$repo_root/rulepacks/rule-authoring"
     "$repo_root/rulepacks/ui-design"
+    "$repo_root/rulepacks/xr-common"
+    "$repo_root/rulepacks/product-pm"
+    "$repo_root/rulepacks/3d-art"
+    "$repo_root/rulepacks/ta-vfx-shader"
     "$repo_root/rulepacks/project-docs"
   )
 fi

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentrulekit.dev/schemas/adapter.schema.json",
-  "title": "AgentRuleKit adapter",
+  "$id": "https://zhishu.dev/schemas/adapter.schema.json",
+  "title": "ZhiShu adapter",
   "type": "object",
   "required": ["id", "version", "status", "capabilities", "outputs"],
   "properties": {

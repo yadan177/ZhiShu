@@ -1,6 +1,6 @@
 ---
 name: toolbox-product-design
-description: "Product Design workflows imported through AI 开发工具箱 for TraeWork. Use for design briefs, product research, UX audits, visual ideation, image or URL based prototypes, design QA, and sharing."
+description: "Product Design workflows imported through 智枢 for TraeWork. Use for design briefs, product research, UX audits, visual ideation, image or URL based prototypes, design QA, and sharing."
 ---
 
 # Product Design · TraeWork

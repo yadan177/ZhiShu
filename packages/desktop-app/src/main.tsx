@@ -3,4 +3,6 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
 
-createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
+const container = document.getElementById("root");
+if (!container) throw new Error("缺少应用挂载节点 #root");
+createRoot(container).render(<React.StrictMode><App /></React.StrictMode>);

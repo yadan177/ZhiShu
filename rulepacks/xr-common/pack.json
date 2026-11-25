@@ -1,0 +1,19 @@
+{
+  "$schema": "../../schemas/rulepack.schema.json",
+  "id": "xr-common",
+  "version": "2.0.0",
+  "status": "ready",
+  "kind": "common",
+  "entry": "15-AI通用入口规则.md",
+  "dependencies": [
+    "common"
+  ],
+  "rules": [
+    "00-文档总览.md",
+    "15-AI通用入口规则.md",
+    "其他规则/01-硬件档位与性能预算基准.md",
+    "其他规则/02-空间舒适度与防眩晕红线.md",
+    "其他规则/03-真机验证与跨岗位协同基线.md",
+    "其他规则/04-音频与XR空间音效规范.md"
+  ]
+}

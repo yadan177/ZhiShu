@@ -1,0 +1,25 @@
+{
+  "name": "zhishu-ta-vfx",
+  "displayName": "技术美术（TA）",
+  "version": "2.0.0",
+  "description": "面向 Unity URP 与移动 XR 渲染管线的特效性能体检、Shader 审查与变体裁剪、材质与合批规范检查、资产导入校验脚本生成与真机剖析报告技能套件。",
+  "author": {
+    "name": "智枢官方"
+  },
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "技术美术（TA）"
+  },
+  "ruleCategories": [
+    "common",
+    "ta-vfx-shader",
+    "unity",
+    "xr-common"
+  ],
+  "suggestedPrompts": [
+    "审查这个 Shader 的 URP Single Pass Instanced 兼容、精度与关键字变体爆炸风险",
+    "体检这个 XR 粒子特效的 Overdraw、粒子数、透明裁剪与内存开销",
+    "编写一个 Unity AssetPostprocessor 导入自动校验脚本检查模型面数、贴图尺寸与音频设置"
+  ]
+}

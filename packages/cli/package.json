@@ -1,18 +1,18 @@
 {
-  "name": "agentrulekit",
-  "version": "0.1.5",
-  "description": "AI开发工具箱：跨项目安装、检查和安全更新 Codex 工程规则",
+  "name": "zhishu",
+  "version": "2.0.0",
+  "description": "智枢：跨项目安装、检查和安全更新 Codex 工程规则",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yadan177/AgentRuleKit.git"
+    "url": "git+https://github.com/yadan177/ZhiShu.git"
   },
   "engines": { "node": ">=22" },
   "files": ["dist"],
   "publishConfig": { "access": "public" },
   "type": "module",
   "bin": {
-    "agent-rule": "dist/index.js"
+    "zhishu": "dist/index.js"
   },
   "scripts": {
     "build": "npm run clean && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:tar --external:yaml",
@@ -25,7 +25,7 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@agentrulekit/adapter-codex": "0.1.5",
-    "@agentrulekit/core": "0.1.5"
+    "@zhishu/adapter-codex": "2.0.0",
+    "@zhishu/core": "2.0.0"
   }
 }

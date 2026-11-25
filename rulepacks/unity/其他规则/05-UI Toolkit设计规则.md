@@ -8,14 +8,18 @@
 ## 1. 官方文档（按版本）
 
 🔴 **AI 开始前**必须确认项目实际 Unity 版本、UI Toolkit 包与现有 UI 体系。本文件中的 API、USS 行为和数据绑定示例必须与目标版本和已有代码核对；不得因为本规则存在而把 UGUI、IMGUI 或第三方 UI 方案迁移为 UI Toolkit。
+
 | 你的 Unity 版本 | 官方文档 URL |
 |---|---|
 | Unity 2021.2 ~ 2021.3 | `https://docs.unity3d.com/2021.3/Documentation/Manual/UIElements.html` |
 | Unity 2022 LTS | `https://docs.unity3d.com/2022.3/Documentation/Manual/UIElements.html` |
 | Unity 6.0 | `https://docs.unity3d.com/6000.0/Documentation/Manual/UIElements.html` |
-| Unity 6.x（最新） | `https://docs.unity3d.com/6000.x/Documentation/Manual/UIElements.html` |
+| 最新稳定版文档入口 | `https://docs.unity3d.com/Manual/UIElements.html` |
+
 > 上表中的「URL」只是基线入口；进入文档后，左侧导航里的 API 文档按 Unity 版本可能略有差异。
+
 ## 2. 文件命名与组织
+
 - ✅ UXML/USS 文件名使用 **PascalCase**，与 Unity 约定保持一致（例如 `MainMenu.uxml`、`InventoryPanel.uxml`、`PlayerHUD.uss`）。
 - ✅ UXML 与 USS 放在统一的目录结构中（例如 `Assets/UI/UXML/` 与 `Assets/UI/USS/`）。
 - ✅ USS 文件名与对应 UXML 一致（例如 `MainMenu.uss` 对应 `MainMenu.uxml`）。
@@ -45,9 +49,9 @@
 | 字体相对单位 | `em`、`rem` | ❌ — 改用 `px` |
 | 颜色值 | 十六进制 `#FF6432`、`rgb()`、`rgba()` | 支持十六进制、`rgb()`、`rgba()`；沿用项目的主题与可读性约定 |
 | 文本对齐 | `text-align: center` | `-unity-text-align: middle-center` |
-| 字体粗细 | `font-style: bold` | `-unity-font-style: bold` |
-| 背景缩放 | `background-size` | `-unity-background-scale-mode: scale-to-fit` 等 |
-| 9-slice 边框 | 无对应 | `-unity-slice-left/right/top/bottom: Npx` |
+| 字体粗细 | `font-weight: bold` | `-unity-font-style: bold` |
+| 背景缩放 | `background-size` | Unity 2022.2+/Unity 6 支持 `background-size`（`contain` / `cover` 等）；旧版本使用 `-unity-background-scale-mode` |
+| 9-slice 边框 | 无对应 | `-unity-slice-left/right/top/bottom: N`（无单位整数像素，不加 `px`） |
 | 盒模型 | 可配置 | 默认 `box-sizing: border-box` |
 
 ### 3.2 颜色值 —— 重点
@@ -175,7 +179,7 @@ decoration.pickingMode = PickingMode.Ignore;
 ```css
 /* Block 基础 */
 .navbar-menu { padding: 8px; }
-.navbar-menu > * { margin-right: 8px; }  /* gap: 8px 不支持 —— 用子元素的 margin */
+.navbar-menu > * { margin-right: 8px; }  /* Unity 2021–6.0 USS 不支持 gap，跨版本兼容推荐用子元素 margin */
 
 /* Element 基础 */
 .navbar-menu__shop-button { min-width: 120px; }
@@ -417,11 +421,11 @@ align-items: flex-start;
 align-items: flex-end;
 align-items: center;
 
-/* ⚠️ USS 不支持 gap —— 改用子元素的 margin */
+/* ⚠️ Unity 2021–6.0 的 USS 不支持 gap；跨版本兼容请用子元素 margin（更高版本以目标 Unity 文档实测为准） */
 /* margin: 0 4px; 应用在子元素上来实现间距 */
 ```
 
-> ❌ **`gap` 不是 USS 支持的属性。** 若要间隔 flex 子元素，请使用子元素的 `margin`（如 `margin-right: 8px;` 或 `margin-bottom: 8px;`）。
+> ⚠️ **`gap` 在 Unity 2021–6.0 的 USS 中不受支持**（更高 Unity 6.x 版本以目标版本文档实测为准）。跨版本间隔 flex 子元素时，使用子元素的 `margin`（如 `margin-right: 8px;` 或 `margin-bottom: 8px;`）。
 
 ### 8.2 子项属性（Children）
 
@@ -453,7 +457,7 @@ align-self: center;
     padding: 10px;
 }
 
-/* 工具栏子项间距 —— USS 不支持 gap，改用 margin */
+/* 工具栏子项间距 —— Unity 2021–6.0 不支持 gap，跨版本兼容用子元素 margin */
 .toolbar > * {
     margin-right: 8px;
 }
@@ -552,9 +556,16 @@ translate: 10px 20px;
 
 ### 10.3 UXML 中的数据绑定
 
+> 区分两套机制：**运行时数据绑定**（Unity 2023.2+ / Unity 6）使用 `data-source-type` 配合 `<Bindings><ui:DataBinding property="..." data-source-path="..." /></Bindings>`；`binding-path` 仅用于 **Editor `SerializedObject.Bind()`**，运行时不要混用。
+
 ```xml
+<!-- ✅ 运行时数据绑定（Unity 2023.2+ / Unity 6） -->
 <ui:VisualElement data-source-type="MyDataClass, Assembly-CSharp" name="data-root">
-    <ui:Label binding-path="PropertyName" />
+    <ui:Label name="value-label">
+        <Bindings>
+            <ui:DataBinding property="text" data-source-path="PropertyName" binding-mode="ToTarget" />
+        </Bindings>
+    </ui:Label>
 </ui:VisualElement>
 ```
 
@@ -696,12 +707,13 @@ translate: 10px 20px;
               value="MiddleCenter" />
 ```
 
-#### 11.4.3 PopupField
+#### 11.4.3 PopupField\<T\>（仅 C#）
 
-类似下拉，需要代码配置。
+`PopupField<T>` 是 C# 泛型类，**不能在 UXML 中直接写 `<ui:PopupField>`**；在 UXML 中请使用 `<ui:DropdownField>`（继承自 `PopupField<string>`），需要强类型选项时在 C# 中创建并添加到容器：
 
-```xml
-<ui:PopupField label="Select Option" name="popup-field" />
+```csharp
+var popup = new PopupField<int>("Level", new List<int> { 1, 2, 3 }, 0);
+container.Add(popup);
 ```
 
 
@@ -972,9 +984,11 @@ table.itemsSource = m_data;
 ```
 
 
-### 11.8 Tab 元素
+### 11.8 Tab 元素（Unity 2023.2+ / Unity 6）
 
 #### 11.8.1 TabView & Tab
+
+> **版本要求**：内置 `TabView` / `Tab` 从 **Unity 2023.2+ / Unity 6** 起提供；Unity 2022 LTS 及更早版本不含该控件，需使用按钮组配合内容面板 `display` 切换实现。
 
 用于在多个内容面板间切换的 Tab 界面。USS 选择器参见 [TabView 与 Tab 样式](#16-tabview-与-tab-样式)。
 
@@ -1016,30 +1030,57 @@ table.itemsSource = m_data;
 
 ### 11.9 可绑定输入元素
 
-这些元素常通过 `binding-path` 绑定到数据属性：
+UXML 绑定需严格区分两套机制：
+
+- **运行时数据绑定（Unity 2023.2+ / Unity 6）**：通过容器 `data-source-type` / C# `dataSource`，配合 `<Bindings><ui:DataBinding property="..." data-source-path="..." /></Bindings>` 绑定到 `[CreateProperty]` 属性。
+- **Editor `SerializedObject` 绑定（仅 Inspector / EditorWindow）**：通过 `binding-path="m_fieldName"` 配合 `SerializedObject.Bind()` 绑定到序列化字段，运行时不会生效。
 
 ```xml
+<!-- ✅ 运行时数据绑定（Unity 2023.2+ / Unity 6）：使用 <Bindings> + data-source-path -->
 <!-- 绑定到 int 属性 -->
-<ui:IntegerField label="Health" binding-path="Health" />
+<ui:IntegerField label="Health">
+    <Bindings>
+        <ui:DataBinding property="value" data-source-path="Health" binding-mode="TwoWay" />
+    </Bindings>
+</ui:IntegerField>
 
 <!-- 绑定到 float 属性 -->
-<ui:FloatField label="Speed" binding-path="Speed" />
+<ui:FloatField label="Speed">
+    <Bindings>
+        <ui:DataBinding property="value" data-source-path="Speed" binding-mode="TwoWay" />
+    </Bindings>
+</ui:FloatField>
 
 <!-- 绑定到 string 属性 -->
-<ui:TextField label="Name" binding-path="PlayerName" />
+<ui:TextField label="Name">
+    <Bindings>
+        <ui:DataBinding property="value" data-source-path="PlayerName" binding-mode="TwoWay" />
+    </Bindings>
+</ui:TextField>
 
 <!-- 绑定到 bool 属性 -->
-<ui:Toggle label="Active" binding-path="IsActive" />
+<ui:Toggle label="Active">
+    <Bindings>
+        <ui:DataBinding property="value" data-source-path="IsActive" binding-mode="TwoWay" />
+    </Bindings>
+</ui:Toggle>
 
 <!-- 绑定 Slider 到 float -->
-<ui:Slider label="Volume" low-value="0" high-value="1" binding-path="Volume" />
-
-<!-- ProgressBar 绑定到带显式 BindingMode 的值 -->
-<ui:ProgressBar low-value="0" high-value="100" binding-path="HealthPercent">
+<ui:Slider label="Volume" low-value="0" high-value="1">
     <Bindings>
-        <ui:DataBinding property="value" binding-mode="ToTarget" />
+        <ui:DataBinding property="value" data-source-path="Volume" binding-mode="TwoWay" />
+    </Bindings>
+</ui:Slider>
+
+<!-- ProgressBar 单向绑定（数据 → UI） -->
+<ui:ProgressBar low-value="0" high-value="100">
+    <Bindings>
+        <ui:DataBinding property="value" data-source-path="HealthPercent" binding-mode="ToTarget" />
     </Bindings>
 </ui:ProgressBar>
+
+<!-- 仅 Editor SerializedObject.Bind() 场景才使用 binding-path： -->
+<!-- <ui:IntegerField label="Health" binding-path="m_health" /> -->
 ```
 
 
@@ -1066,8 +1107,8 @@ table.itemsSource = m_data;
 | `ListView` | 虚拟化列表 | `fixed-item-height`、`selection-type` |
 | `TreeView` | 层级列表 | `fixed-item-height` |
 | `MultiColumnListView` | 表格视图 | `<ui:Columns>` 子元素 |
-| `TabView` | Tab 容器 | `reorderable` |
-| `Tab` | Tab 内容 | `label`、`closeable`、`icon-image` |
+| `TabView` | Tab 容器（Unity 2023.2+） | `reorderable` |
+| `Tab` | Tab 内容（Unity 2023.2+） | `label`、`closeable`、`icon-image` |
 | `Box` | 带边框容器 | — |
 | `HelpBox` | 信息/警告/错误 | `text`、`message-type` |
 
@@ -1156,7 +1197,7 @@ private void OnDisable()
     m_button.clicked -= OnButtonClicked;
 }
 
-/// ⚠️ Awake：若 UIDocument 在同一 GameObject 上（会在 Awake 中同步初始化），
+// ⚠️ Awake：若 UIDocument 在同一 GameObject 上（会在 Awake 中同步初始化），
 //    此处查询 rootVisualElement 是可以的，但意味着查询和事件订阅会分散在
 //    不同的生命周期方法中。
 //    推荐在 OnEnable 中统一处理查询与事件注册。
@@ -1243,40 +1284,42 @@ if (button.enabledSelf) { /* 按钮已启用 */ }
 ### 14.3 其它事件类型
 
 ```csharp
-// 通用事件注册
-button.RegisterCallback<ClickEvent>(OnClick);
-
-// 指针事件：按当前界面的高亮/提示策略处理。
-element.RegisterCallback<PointerEnterEvent>(evt => { /* 更新悬停状态 */ });
-element.RegisterCallback<PointerLeaveEvent>(evt => { /* 清理悬停状态 */ });
-
-// 值变化
-textField.RegisterValueChangedCallback(evt =>
+// ✅ 使用具名回调注册，确保 OnDisable / OnDestroy 能成对反注册（避免无法取消的匿名 lambda）
+private void OnEnable()
 {
-    // 应用项目已有的数据/校验逻辑。
-});
-slider.RegisterValueChangedCallback(evt =>
-{
-    // 应用项目已有的数据/校验逻辑。
-});
-
-// 键盘
-element.RegisterCallback<KeyDownEvent>(evt =>
-{
-    if (evt.keyCode == KeyCode.Return) Submit();
-});
-
-// 事件传播
-button.RegisterCallback<ClickEvent>(evt =>
-{
-    evt.StopPropagation();
-});
+    m_button.RegisterCallback<ClickEvent>(OnClick);
+    m_element.RegisterCallback<PointerEnterEvent>(OnPointerEnter);
+    m_element.RegisterCallback<PointerLeaveEvent>(OnPointerLeave);
+    m_textField.RegisterValueChangedCallback(OnTextChanged);
+    m_slider.RegisterValueChangedCallback(OnSliderChanged);
+    m_element.RegisterCallback<KeyDownEvent>(OnKeyDown);
+}
 
 // 清理 —— MonoBehaviour 用 OnDisable，EditorWindow 用 OnDestroy
 private void OnDisable()
 {
-    button.clicked -= OnButtonClicked;
-    button.UnregisterCallback<ClickEvent>(OnClick);
+    m_button.UnregisterCallback<ClickEvent>(OnClick);
+    m_element.UnregisterCallback<PointerEnterEvent>(OnPointerEnter);
+    m_element.UnregisterCallback<PointerLeaveEvent>(OnPointerLeave);
+    m_textField.UnregisterValueChangedCallback(OnTextChanged);
+    m_slider.UnregisterValueChangedCallback(OnSliderChanged);
+    m_element.UnregisterCallback<KeyDownEvent>(OnKeyDown);
+}
+
+private void OnClick(ClickEvent evt)
+{
+    // 若需阻止事件继续冒泡
+    evt.StopPropagation();
+}
+
+private void OnPointerEnter(PointerEnterEvent evt) { /* 更新悬停状态 */ }
+private void OnPointerLeave(PointerLeaveEvent evt) { /* 清理悬停状态 */ }
+private void OnTextChanged(ChangeEvent<string> evt) { /* 应用项目已有的数据/校验逻辑 */ }
+private void OnSliderChanged(ChangeEvent<float> evt) { /* 应用项目已有的数据/校验逻辑 */ }
+
+private void OnKeyDown(KeyDownEvent evt)
+{
+    if (evt.keyCode == KeyCode.Return) Submit();
 }
 ```
 
@@ -1374,6 +1417,8 @@ public void RefreshList() => m_listView.RefreshItems();
 
 
 ## 16. TabView 与 Tab 样式
+
+> **版本要求**：内置 `TabView` / `Tab` 仅在 **Unity 2023.2+ / Unity 6** 中可用；Unity 2022 LTS 及更早版本需自行以按钮栏和内容容器实现 Tab 切换。
 
 ### 16.1 USS 选择器
 
@@ -1509,6 +1554,7 @@ public new class UxmlTraits : VisualElement.UxmlTraits
 
 ✅ **已验证 Unity 2023.2+ 时使用：**
 ```csharp
+using UnityEngine;
 using UnityEngine.UIElements;
 
 /// <summary>
@@ -1568,7 +1614,8 @@ public partial class HealthBar : VisualElement
 ```csharp
 // Unity 2022 推荐写法：手动订阅 INotifyPropertyChanged
 using System.ComponentModel;
-using System.Runtime.CompilerServices;
+
+using UnityEngine;
 
 public class PlayerDataSO : ScriptableObject, INotifyPropertyChanged
 {
@@ -1590,17 +1637,24 @@ public class PlayerDataSO : ScriptableObject, INotifyPropertyChanged
 }
 ```
 
-在 C# 中手动订阅：
+在 C# 中手动订阅（使用具名回调并在 `OnDisable` 成对取消）：
 ```csharp
 // Unity 2022
 private void OnEnable()
 {
     m_playerData.PropertyChanged += OnDataChanged;
-    m_playerData.PropertyChanged += (s, e) =>
-    {
-        if (e.PropertyName == nameof(PlayerDataSO.Health))
-            m_healthBar.value = m_playerData.Health;
-    };
+    m_healthBar.value = m_playerData.Health;
+}
+
+private void OnDisable()
+{
+    m_playerData.PropertyChanged -= OnDataChanged;
+}
+
+private void OnDataChanged(object sender, PropertyChangedEventArgs e)
+{
+    if (e.PropertyName == nameof(PlayerDataSO.Health))
+        m_healthBar.value = m_playerData.Health;
 }
 ```
 
@@ -1690,13 +1744,21 @@ public class ItemDataSO : ScriptableObject
 ```xml
 <ui:UXML xmlns:ui="UnityEngine.UIElements">
     <ui:VisualElement data-source-type="PlayerDataSO, Assembly-CSharp" name="player-panel">
-        <ui:Label binding-path="PlayerName" name="name-label" />
-        <ui:ProgressBar binding-path="Health" low-value="0" high-value="100" />
+        <ui:Label name="name-label">
+            <Bindings>
+                <ui:DataBinding property="text" data-source-path="PlayerName" binding-mode="ToTarget" />
+            </Bindings>
+        </ui:Label>
+        <ui:ProgressBar low-value="0" high-value="100">
+            <Bindings>
+                <ui:DataBinding property="value" data-source-path="Health" binding-mode="ToTarget" />
+            </Bindings>
+        </ui:ProgressBar>
     </ui:VisualElement>
 </ui:UXML>
 ```
 
-> ⚠️ `binding-path` **区分大小写** —— 必须与 C# 中的属性名完全一致。
+> ⚠️ 运行时绑定使用 `data-source-path`（配合 `<Bindings><ui:DataBinding ... /></Bindings>`），且**区分大小写** —— 必须与 C# 中带 `[CreateProperty]` 的属性名完全一致；`binding-path` 仅用于 Editor `SerializedObject.Bind()`。
 
 ### 18.5 在 C# 中设置数据源
 
@@ -1711,7 +1773,7 @@ public class UIController : MonoBehaviour
         var root = m_uiDocument.rootVisualElement;
         var playerPanel = root.Q<VisualElement>("player-panel");
 
-        // 赋值 dataSource —— 解析 UXML 中的所有 binding-path 声明
+        // 赋值 dataSource —— 解析 UXML 中的所有 DataBinding / data-source-path 声明
         playerPanel.dataSource = m_playerData;
     }
 }
@@ -1777,7 +1839,7 @@ field.BindProperty(property);
 rootVisualElement.Add(field);
 ```
 
-运行时 UI 仅在当前项目已验证支持时使用 `SetBinding()` 与 `binding-path` —— 参见上文第 18 节的数据绑定版本检查。
+Editor 窗口 / Inspector 才使用 `SerializedObject.Bind()` 与 UXML `binding-path`；运行时 UI 仅在当前项目已验证支持时使用 `SetBinding()` 或 UXML `<Bindings><ui:DataBinding ... data-source-path="..." /></Bindings>` 配合 `dataSource` —— 参见上文第 18 节的数据绑定版本检查。
 
 
 ## 20. 常用模式与示例
@@ -1882,7 +1944,7 @@ rootVisualElement.Add(field);
 
 ### 21.3 完整示例：玩家属性面板
 
-#### 21.3.1 2. Model（数据类）
+#### 21.3.1 Model（数据类）
 
 ```csharp
 // PlayerStatsModel.cs
@@ -1998,7 +2060,7 @@ namespace Game.Models
 }
 ```
 
-#### 21.3.2 3. View（UI 控制器）
+#### 21.3.2 View（UI 控制器）
 
 ```csharp
 // PlayerStatsView.cs
@@ -2078,7 +2140,7 @@ namespace Game.Views
 }
 ```
 
-#### 21.3.3 4. Presenter（游戏逻辑）
+#### 21.3.3 Presenter（游戏逻辑）
 
 ```csharp
 // PlayerStatsPresenter.cs
@@ -2166,7 +2228,7 @@ namespace Game.Presenters
 }
 ```
 
-#### 21.3.4 5. UXML（带绑定的 UI 布局）
+#### 21.3.4 UXML（带绑定的 UI 布局）
 
 ```xml
 <!-- PlayerStatsPanel.uxml -->
@@ -2177,9 +2239,11 @@ namespace Game.Presenters
                       class="stats-panel"
                       data-source-type="Game.Models.PlayerStatsModel, Assembly-CSharp">
 
-        <ui:Label name="player-name" class="stats-panel__title" binding-path="PlayerName">
+        <ui:Label name="player-name" class="stats-panel__title">
             <Bindings>
-                <ui:DataBinding property="text" binding-mode="ToTarget" />
+                <ui:DataBinding property="text"
+                                data-source-path="PlayerName"
+                                binding-mode="ToTarget" />
             </Bindings>
         </ui:Label>
 
@@ -2189,10 +2253,11 @@ namespace Game.Presenters
             <ui:ProgressBar name="health-bar"
                             class="stats-panel__progress stats-panel__progress--health"
                             low-value="0"
-                            high-value="100"
-                            binding-path="HealthPercent">
+                            high-value="100">
                 <Bindings>
-                    <ui:DataBinding property="value" binding-mode="ToTarget" />
+                    <ui:DataBinding property="value"
+                                    data-source-path="HealthPercent"
+                                    binding-mode="ToTarget" />
                 </Bindings>
             </ui:ProgressBar>
             <ui:Label name="health-text" class="stats-panel__value">
@@ -2210,10 +2275,11 @@ namespace Game.Presenters
             <ui:ProgressBar name="stamina-bar"
                             class="stats-panel__progress stats-panel__progress--stamina"
                             low-value="0"
-                            high-value="100"
-                            binding-path="StaminaPercent">
+                            high-value="100">
                 <Bindings>
-                    <ui:DataBinding property="value" binding-mode="ToTarget" />
+                    <ui:DataBinding property="value"
+                                    data-source-path="StaminaPercent"
+                                    binding-mode="ToTarget" />
                 </Bindings>
             </ui:ProgressBar>
             <ui:Label name="stamina-text" class="stats-panel__value">
@@ -2248,7 +2314,7 @@ namespace Game.Presenters
 </ui:UXML>
 ```
 
-#### 21.3.5 6. USS（样式）
+#### 21.3.5 USS（样式）
 
 ```css
 /* PlayerStats.uss */
@@ -2352,8 +2418,8 @@ namespace Game.Presenters
 | `text-align: center;` | `-unity-text-align: middle-center;` | 需要 Unity 前缀 |
 | `font-weight: bold;` | `-unity-font-style: bold;` | 属性名不同 |
 | `background: url(...)` | `background-image: url(...)` | 无简写形式 |
-| `element.visible = false` | `element.style.display = DisplayStyle.None` | 使用 style 属性 |
-| `binding-path="health"` | `binding-path="Health"` | 区分大小写 |
+| 想脱离布局却只设 `element.visible = false` | 脱离布局用 `element.style.display = DisplayStyle.None`；需保留占位才用 `visible = false` / `Visibility.Hidden` | `visible = false` 合法但等价于 `Visibility.Hidden`，仍占据布局空间 |
+| `data-source-path="health"` 或运行时误用 `binding-path` | `<ui:DataBinding ... data-source-path="Health" />` | 运行时绑定使用 `data-source-path` 且区分大小写；`binding-path` 仅用于 Editor `SerializedObject` |
 | `button.onClick += ...` | `button.clicked += ...` | 使用 `clicked` |
 | `button.enabled = false` | `button.SetEnabled(false)` | 使用方法 |
 | 缺少 `[CreateProperty]` | 添加 `[CreateProperty]` | 绑定所必需 |
@@ -2366,9 +2432,9 @@ namespace Game.Presenters
 | `navbar-item` | `navbar-menu__item` | 使用 BEM 的 `__` |
 | `display: grid` | 仅使用 flexbox | USS 不支持 CSS grid |
 | `calc(50% - 10px)` | 硬编码或用 `flex-grow` | USS 不支持 `calc()` |
-| `UxmlFactory`/`UxmlTraits` | `[UxmlElement]` / `[UxmlAttribute]` | Unity 6 推荐新方式（旧API仍兼容） |
+| 不区分版本混用 `UxmlFactory` 与 `[UxmlElement]` | Unity 2023.2+/Unity 6 推荐 `[UxmlElement]` / `[UxmlAttribute]`；Unity 2022 及更早必须用 `UxmlFactory`/`UxmlTraits` | 按项目最低支持 Unity 版本选择（见 § 17） |
 | 运行时 MonoBehaviour 用 `OnDestroy` | 用 `OnDisable` | `OnDestroy` 触发过晚 |
-| 运行时用 `SerializedObject.Bind()` | `binding-path` + `dataSource` | 仅 Editor API |
+| 运行时用 `SerializedObject.Bind()` / `binding-path` | `dataSource` + `DataBinding`（`data-source-path`）或 `SetBinding()` | `SerializedObject.Bind()` 与 `binding-path` 为 Editor API |
 
 
 ## 24. 故障排查
@@ -2379,7 +2445,7 @@ namespace Game.Presenters
 2. ✅ 类已实现 `INotifyBindablePropertyChanged`
 3. ✅ 属性变化时调用了 `Notify()`
 4. ✅ 已在 C# 中赋值 `dataSource`
-5. ✅ `binding-path` 与属性名完全一致（区分大小写）
+5. ✅ 运行时 UXML 使用 `<Bindings><ui:DataBinding ... data-source-path="..." /></Bindings>`（非 Editor 专用的 `binding-path`），且属性名完全一致（区分大小写）
 
 ### 24.2 元素不可见
 
@@ -2419,3 +2485,10 @@ namespace Game.Presenters
 1. USS 已在 UXML 中通过 `<Style src="..." />` 引用
 2. class 名严格匹配（区分大小写）
 3. 用 UI Toolkit Debugger 检查计算后的样式
+
+## 25. 组件文案解耦与抗改字约束
+
+组件文字在产品迭代中常经历多轮修改，UI Toolkit 实现层应从结构上降低改字返工成本：
+
+- 🔴 **UXML 模板不硬编码跨页复用的业务文案**：通用 `VisualTreeAsset` 模板（按钮、徽章、弹窗、列表行）只保留简短占位或空值，真实业务词统一由数据绑定（`dataSource` / `DataBinding`）、项目既有 Localization Table 或集中 C# 文案映射表注入，避免同一业务词散落在多份 UXML 与脚本中。
+- 🔴 **USS 布局默认抗改字溢出**：按钮、Tab 与徽章优先使用 `padding` + `min-width` + Flexbox 自适应宽度（不写死窄固定像素宽）；单行长文本显式配置 `overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`（多行则设置 `white-space: normal;` 并控制最大高度），防止二次改字撑破布局。

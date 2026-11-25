@@ -1,0 +1,32 @@
+{
+  "name": "zhishu-fullstack-dev",
+  "displayName": "全栈开发工程师",
+  "version": "2.0.0",
+  "description": "面向 JS/TS、Go、Java、Python 全栈及 WebXR/visionOS 跨端空间工程的代码审查、跨端接口契约核对、组件与空间 UI 实现走查、数据库迁移检查、自动化测试生成与技术文档/变更日志同步技能套件。",
+  "author": {
+    "name": "智枢官方"
+  },
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "全栈开发工程师"
+  },
+  "ruleCategories": [
+    "common",
+    "javascript",
+    "typescript",
+    "go",
+    "java",
+    "python",
+    "xr-common",
+    "project-docs/js-ts",
+    "project-docs/go",
+    "project-docs/java",
+    "project-docs/python"
+  ],
+  "suggestedPrompts": [
+    "按当前仓库语言规范审查本次 PR Diff 的逻辑缺陷、安全风险与测试缺口",
+    "对照跨端接口契约核对前后端字段、时间格式、错误码与向下兼容性",
+    "同步更新本次改动涉及的技术文档架构图与 CHANGELOG 变更记录"
+  ]
+}

@@ -19,7 +19,7 @@ function expectExit(result, code, context) {
 }
 
 test("CLI 可选择四个平台，共用 AGENTS.md 并安全更新、卸载", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-cli-platforms-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-cli-platforms-"));
   try {
     const source = path.join(root, "source");
     const project = path.join(root, "project");
@@ -46,7 +46,7 @@ test("CLI 可选择四个平台，共用 AGENTS.md 并安全更新、卸载", as
 });
 
 test("Python、TypeScript、Unity 工程完成安装与安全更新闭环", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-cli-e2e-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-cli-e2e-"));
   try {
     const source = path.join(root, "source");
     await mkdir(source);
@@ -129,7 +129,7 @@ test("Python、TypeScript、Unity 工程完成安装与安全更新闭环", asyn
 });
 
 test("差异预览明确显示文件末尾换行的增删", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-newline-diff-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-newline-diff-"));
   try {
     const source = path.join(root, "source");
     const target = path.join(root, "target");
@@ -144,7 +144,7 @@ test("差异预览明确显示文件末尾换行的增删", async () => {
     await writeFile(rule, "# Rule");
     const removed = command("diff", target);
     expectExit(removed, 0, "预览删除末尾换行");
-    const removedRule = removed.stdout.split("diff --agent-rule .agent-rules/common/entry.md")[1]?.split("diff --agent-rule")[0];
+    const removedRule = removed.stdout.split("diff --zhishu .agent-rules/common/entry.md")[1]?.split("diff --zhishu")[0];
     assert.match(removedRule, /-# Rule\n\+# Rule\n\\ No newline at end of file/);
     expectExit(command("update", target, "--apply"), 0, "应用删除末尾换行");
     assert.equal(await readFile(path.join(target, ".agent-rules", "common", "entry.md"), "utf8"), "# Rule");
@@ -152,14 +152,14 @@ test("差异预览明确显示文件末尾换行的增删", async () => {
     await writeFile(rule, "# Rule\n");
     const added = command("diff", target);
     expectExit(added, 0, "预览增加末尾换行");
-    const addedRule = added.stdout.split("diff --agent-rule .agent-rules/common/entry.md")[1]?.split("diff --agent-rule")[0];
+    const addedRule = added.stdout.split("diff --zhishu .agent-rules/common/entry.md")[1]?.split("diff --zhishu")[0];
     assert.match(addedRule, /-# Rule\n\\ No newline at end of file\n\+# Rule/);
     expectExit(command("update", target, "--apply"), 0, "应用增加末尾换行");
 
     await writeFile(rule, "# Rule\r\n");
     const changedLineEnding = command("diff", target);
     expectExit(changedLineEnding, 0, "预览 CRLF 与 LF 的区别");
-    const endingRule = changedLineEnding.stdout.split("diff --agent-rule .agent-rules/common/entry.md")[1]?.split("diff --agent-rule")[0];
+    const endingRule = changedLineEnding.stdout.split("diff --zhishu .agent-rules/common/entry.md")[1]?.split("diff --zhishu")[0];
     assert.match(endingRule, /-# Rule\n\+# Rule\\r/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -167,7 +167,7 @@ test("差异预览明确显示文件末尾换行的增删", async () => {
 });
 
 test("UI 规则按需选装文档依赖，预览、更新与移除保留项目内容", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-ui-rules-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-ui-rules-"));
   try {
     const source = path.join(root, "source");
     await cp(path.join(repository, "rulepacks"), path.join(source, "rulepacks"), { recursive: true });
@@ -254,7 +254,7 @@ test("UI 规则按需选装文档依赖，预览、更新与移除保留项目�
 });
 
 test("CLI 卸载先预览再应用，保留项目本地规则且无需联网", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-uninstall-cli-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-uninstall-cli-"));
   try {
     const source = path.join(root, "source");
     const target = path.join(root, "target");
@@ -266,11 +266,11 @@ test("CLI 卸载先预览再应用，保留项目本地规则且无需联网", a
     const lockPath = path.join(target, ".agent-rules.lock.json");
     const configPath = path.join(target, "agent-rules.yaml");
     const config = parse(await readFile(configPath, "utf8"));
-    config.source = { type: "github", repository: "yadan177/AgentRuleKit" };
+    config.source = { type: "github", repository: "yadan177/ZhiShu" };
     await writeFile(configPath, stringify(config));
     const githubLock = JSON.parse(await readFile(lockPath, "utf8"));
     githubLock.sourceType = "github";
-    githubLock.source = "yadan177/AgentRuleKit";
+    githubLock.source = "yadan177/ZhiShu";
     githubLock.sourceVersion = githubLock.toolkitVersion;
     githubLock.sourceDigest = `sha256:${"a".repeat(64)}`;
     githubLock.sourceCommit = "a".repeat(40);
@@ -284,11 +284,11 @@ test("CLI 卸载先预览再应用，保留项目本地规则且无需联网", a
     assert.match(preview.stdout, /将删除工具生成的 AGENTS\.md/);
     assert.match(preview.stdout, /保留项目本地文件（不删除）：[\s\S]*\.agent-rules\/overrides\.md/);
     assert.match(preview.stdout, /--details/);
-    assert.doesNotMatch(preview.stdout, /diff --agent-rule/);
+    assert.doesNotMatch(preview.stdout, /diff --zhishu/);
     assert.equal(await readFile(lockPath, "utf8"), before);
     const details = command("uninstall", target, "--details");
     expectExit(details, 0, "逐行卸载预览");
-    assert.match(details.stdout, /diff --agent-rule \.agent-rules\/go\//);
+    assert.match(details.stdout, /diff --zhishu \.agent-rules\/go\//);
     assert.match(details.stdout, /将删除 \d+ 个受管文件/);
     assert.equal(await readFile(lockPath, "utf8"), before);
     expectExit(command("uninstall", target, source, "--apply"), 1, "多个项目路径应被拒绝");
@@ -297,14 +297,52 @@ test("CLI 卸载先预览再应用，保留项目本地规则且无需联网", a
     await writeFile(denyNetwork, "globalThis.fetch = () => { throw new Error('卸载不应联网'); };\n");
     const applied = spawnSync(process.execPath, ["--import", pathToFileURL(denyNetwork).href, cli, "uninstall", "--apply", target], { encoding: "utf8" });
     expectExit(applied, 0, "应用卸载");
-    assert.match(applied.stdout, /已在 .* 卸载 AgentRuleKit 项目规则/);
+    assert.match(applied.stdout, /已在 .* 卸载 智枢项目规则/);
     assert.match(applied.stdout, /已删除 \d+ 个受管文件/);
-    assert.doesNotMatch(applied.stdout, /diff --agent-rule/);
+    assert.doesNotMatch(applied.stdout, /diff --zhishu/);
     assert.equal(await readFile(overridePath, "utf8"), "# 本地规则\n");
     await assert.rejects(readFile(lockPath, "utf8"), /ENOENT/);
     await assert.rejects(readFile(path.join(target, "AGENTS.md"), "utf8"), /ENOENT/);
     expectExit(command("init", target, "--source-workspace", source), 0, "卸载后重新安装");
     expectExit(command("validate", target), 0, "重新安装后校验");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI init 支持 --rulepacks 多岗位组合与 Antigravity / TRAE 目标", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-cli-rulepacks-"));
+  try {
+    const source = path.join(root, "source");
+    const target = path.join(root, "xr-project");
+    await mkdir(target);
+    await cp(path.join(repository, "rulepacks"), path.join(source, "rulepacks"), { recursive: true });
+    const initialized = command(
+      "init",
+      target,
+      "--source-workspace",
+      source,
+      "--targets",
+      "codex,antigravity,trae",
+      "--rulepacks",
+      "unity,xr-common,product-pm,ui-design",
+    );
+    expectExit(initialized, 0, "多岗位组合 init");
+    expectExit(command("validate", target), 0, "多岗位组合 validate");
+    const config = parse(await readFile(path.join(target, "agent-rules.yaml"), "utf8"));
+    const lock = JSON.parse(await readFile(path.join(target, ".agent-rules.lock.json"), "utf8"));
+    assert.deepEqual(config.targets, ["codex", "antigravity", "trae"]);
+    assert.deepEqual(config.rulepacks, ["unity", "xr-common", "product-pm", "ui-design"]);
+    assert.ok(lock.rulepacks.common, "应自动安装传递依赖 common");
+    assert.ok(lock.rulepacks["project-docs/ui-design"], "应自动安装传递依赖 project-docs/ui-design");
+    const entry = await readFile(path.join(target, "AGENTS.md"), "utf8");
+    assert.match(entry, /XR 空间计算项目通用基准/);
+    assert.match(entry, /产品需求、结构图、流程图、泳道图或验收梳理/);
+    assert.match(entry, /UI 设计、交互、视觉、组件或资源交付/);
+
+    const bad = command("init", path.join(root, "bad-packs"), "--source-workspace", source, "--rulepacks", "common,common");
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /--rulepacks/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

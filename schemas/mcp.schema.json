@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zhishu.dev/schemas/mcp.schema.json",
+  "title": "ZhiShu MCP server definition",
+  "type": "object",
+  "required": ["schemaVersion", "id", "title", "version", "transport"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+([-+][A-Za-z0-9.-]+)?$" },
+    "transport": { "enum": ["stdio", "http"] },
+    "command": { "type": "string", "minLength": 1 },
+    "args": { "type": "array", "items": { "type": "string" } },
+    "url": { "type": "string", "minLength": 1 },
+    "envSchema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "label"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+          "label": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "secret": { "type": "boolean" },
+          "placeholder": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "preset": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "transport": { "const": "stdio" } } },
+      "then": { "required": ["command"] }
+    },
+    {
+      "if": { "properties": { "transport": { "const": "http" } } },
+      "then": { "required": ["url"] }
+    }
+  ],
+  "additionalProperties": false
+}

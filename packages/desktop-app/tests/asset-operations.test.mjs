@@ -91,7 +91,7 @@ test("没有版本号的独立 Skill 以内容版本保存，可导入后续更�
     assert.notEqual(first.key, second.key); assert.equal((await library.list()).length, 2);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-test("Codex 安装失败时撤回工具箱交付文件，未留下成功记录", async () => {
+test("Codex 安装失败时撤回智枢交付文件，未留下成功记录", async () => {
   const { root, home, library } = await setup();
   try {
     const source = path.join(root, "plugin"); await mkdir(path.join(source, ".codex-plugin"), { recursive: true });
@@ -107,12 +107,12 @@ test("Codex 安装失败时撤回工具箱交付文件，未留下成功记录",
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("真实 Codex CLI 在隔离用户环境完成插件安装、更新、漂移拒绝和卸载", { skip: !process.env.AGENTRULEKIT_CODEX_CLI }, async () => {
+test("真实 Codex CLI 在隔离用户环境完成插件安装、更新、漂移拒绝和卸载", { skip: !process.env.ZHISHU_CODEX_CLI }, async () => {
   const { root, home, library } = await setup();
   try {
     const codexHome = path.join(home, ".codex"); await mkdir(codexHome);
     await writeFile(path.join(codexHome, "config.toml"), 'model = "installer-fixture"\n');
-    const operations = new AssetOperations(library, path.join(root, "state"), { userHome: home, codexHome, findCli: async () => process.env.AGENTRULEKIT_CODEX_CLI });
+    const operations = new AssetOperations(library, path.join(root, "state"), { userHome: home, codexHome, findCli: async () => process.env.ZHISHU_CODEX_CLI });
     for (const version of ["1.0.0", "1.1.0"]) {
       const source = path.join(root, `plugin-${version}`); await mkdir(path.join(source, ".codex-plugin"), { recursive: true });
       await mkdir(path.join(source, "skills/sample"), { recursive: true });

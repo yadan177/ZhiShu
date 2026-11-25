@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const repository = fileURLToPath(new URL("../", import.meta.url));
 const rulepacksRoot = path.join(repository, "rulepacks");
-const outputPath = path.join(repository, "docs", "rulepack-provenance-inventory.md");
+const outputPath = path.join(repository, "项目文档", "技术文档", "规则包内容来源清单.md");
 const mode = process.argv[2];
 if (mode && !["--write", "--check"].includes(mode)) throw new Error(`未知参数：${mode}`);
 
@@ -34,7 +34,9 @@ function externalDomains(content) {
     try {
       const hostname = new URL(match[0]).hostname.toLowerCase();
       if (!["localhost", "127.0.0.1", "example.com", "example.org", "example.net"].includes(hostname)) domains.add(hostname);
-    } catch { /* 非 URL 示例 */ }
+    } catch {
+      // 忽略文档中的非合法 URL 占位示例。
+    }
   }
   return [...domains].sort(compareText);
 }
@@ -87,11 +89,11 @@ const lines = [
   "",
   "## 逐文件复核索引",
   "",
-  "来源线索列只标记匹配行号，须打开正文核对上下文；外链域名仅说明文本出现过 URL。人工审查结论记录在 [内容权利复核表](content-rights-review.md)，不能直接在自动生成清单中勾选。",
+  "来源线索列只标记匹配行号，须打开正文核对上下文；外链域名仅说明文本出现过 URL。人工审查结论记录在 [内容权利复核表](内容权利复核表.md)，不能直接在自动生成清单中勾选。",
   "",
   "| 文件 | 规范化文本 SHA-256 | 来源线索行 | 外链域名 |",
   "|---|---|---|---|",
-  ...files.map((file) => `| [\`${file.path}\`](<../${file.path}>) | \`${file.digest}\` | ${file.clues.length ? file.clues.map((line) => `L${line}`).join(", ") : "—"} | ${file.domains.length ? file.domains.join(", ") : "—"} |`),
+  ...files.map((file) => `| [\`${file.path}\`](<../../${file.path}>) | \`${file.digest}\` | ${file.clues.length ? file.clues.map((line) => `L${line}`).join(", ") : "—"} | ${file.domains.length ? file.domains.join(", ") : "—"} |`),
   "",
 ];
 const output = lines.join("\n");

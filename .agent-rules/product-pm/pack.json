@@ -1,0 +1,17 @@
+{
+  "id": "product-pm",
+  "version": "2.0.0",
+  "status": "ready",
+  "kind": "common",
+  "entry": "15-AI通用入口规则.md",
+  "dependencies": [
+    "common"
+  ],
+  "rules": [
+    "00-文档总览.md",
+    "15-AI通用入口规则.md",
+    "其他规则/01-需求范围与产品结构规则.md",
+    "其他规则/02-PRD编写与状态流程规则.md",
+    "其他规则/03-XR产品体验与验收准出规则.md"
+  ]
+}

@@ -7,6 +7,15 @@ import { assetFileHashes, readAssetFiles, type UserAssetReceipt } from "../../pa
 
 const execute = promisify(execFile);
 export type CodexRunner = (args: string[]) => Promise<string>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function codexMcpConfigPath(codexHome: string): string {
+  return path.join(codexHome, "config.toml");
+}
+
 export async function findCodexCli(): Promise<string | undefined> {
   const directories = String(process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
   const executable = process.platform === "win32" ? "codex.exe" : "codex";
@@ -25,8 +34,13 @@ export async function findCodexCli(): Promise<string | undefined> {
     ])),
   ];
   for (const file of candidates) {
-    try { await access(file); await execute(file, ["plugin", "add", "--help"], { timeout: 10000, maxBuffer: 64 * 1024 }); return file; }
-    catch { /* Try the next installed binary; never install or repair Codex automatically. */ }
+    try {
+      await access(file);
+      await execute(file, ["plugin", "add", "--help"], { timeout: 10000, maxBuffer: 64 * 1024 });
+      return file;
+    } catch {
+      // 探测下一个已安装的候选二进制文件；绝不自动安装或修复 Codex。
+    }
   }
 }
 export function codexRunner(binary: string, codexHome: string): CodexRunner {
@@ -37,7 +51,7 @@ export function codexRunner(binary: string, codexHome: string): CodexRunner {
   };
 }
 
-/** Read-only discovery in the selected user environment. No thread or model request is started. */
+/** 在所选用户环境中执行只读技能发现；不启动对话线程或模型请求。 */
 export async function discoverCodexSkills(binary: string, userHome: string, codexHome: string): Promise<{ name: string; path: string; scope: string; enabled: boolean }[]> {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, ["app-server"], { cwd: userHome, env: { ...process.env, HOME: userHome, CODEX_HOME: codexHome }, stdio: ["pipe", "pipe", "ignore"] });
@@ -54,8 +68,9 @@ export async function discoverCodexSkills(binary: string, userHome: string, code
     lines.on("line", (line) => {
       received += Buffer.byteLength(line);
       if (received > 8 * 1024 * 1024) return finish(new Error("Codex 技能列表超出检查上限"));
-      let message; try { message = JSON.parse(line); } catch { return; }
-      if (!message || typeof message !== "object") return;
+      let message: unknown;
+      try { message = JSON.parse(line); } catch { return; }
+      if (!isRecord(message)) return;
       if (message.id === 1) {
         if (message.error) return finish(new Error("Codex 不支持技能检查协议"));
         send({ method: "initialized", params: {} });
@@ -65,16 +80,18 @@ export async function discoverCodexSkills(binary: string, userHome: string, code
         const result: { name: string; path: string; scope: string; enabled: boolean }[] = [];
         function collect(value: unknown): void {
           if (Array.isArray(value)) for (const item of value) collect(item);
-          else if (value && typeof value === "object") {
-            const item = value as Record<string, unknown>;
-            if (typeof item.name === "string" && typeof item.path === "string" && typeof item.scope === "string") result.push({ name: item.name, path: item.path, scope: item.scope, enabled: item.enabled === true });
-            else for (const child of Object.values(item)) collect(child);
+          else if (isRecord(value)) {
+            if (typeof value.name === "string" && typeof value.path === "string" && typeof value.scope === "string") {
+              result.push({ name: value.name, path: value.path, scope: value.scope, enabled: value.enabled === true });
+            } else {
+              for (const nested of Object.values(value)) collect(nested);
+            }
           }
         }
         collect(message.result); finish(undefined, result);
       }
     });
-    send({ id: 1, method: "initialize", params: { clientInfo: { name: "agentrulekit-installer", version: "0.1.5" }, capabilities: { experimentalApi: false } } });
+    send({ id: 1, method: "initialize", params: { clientInfo: { name: "zhishu-installer", version: "2.0.0" }, capabilities: { experimentalApi: false } } });
   });
 }
 
@@ -82,15 +99,19 @@ export class CodexPluginHost {
   constructor(private readonly run: CodexRunner, private readonly codexHome: string) {}
   private identity(name: string): { marketplace: string; pluginId: string; cache: string } {
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) throw new Error("Codex 插件名称无效");
-    const marketplace = `agentrulekit-${name}`;
+    const marketplace = `zhishu-${name}`;
     return { marketplace, pluginId: `${name}@${marketplace}`, cache: path.join(this.codexHome, "plugins/cache", marketplace, name) };
   }
   async inspect(name: string): Promise<{ installed: boolean; enabled: boolean; source?: string; cached: boolean }> {
     const identity = this.identity(name);
-    const result = JSON.parse(await this.run(["plugin", "list", "--marketplace", identity.marketplace, "--available", "--json"]));
-    if (!result || !Array.isArray(result.installed)) throw new Error("Codex 返回的插件状态不受支持");
-    const item = [...result.installed, ...(result.available ?? [])].find((value: { pluginId?: string }) => value.pluginId === identity.pluginId);
-    return { installed: !!item?.installed, enabled: !!item?.enabled, source: item?.marketplaceSource?.source, cached: (await readAssetFiles(identity.cache)).size > 0 };
+    const result: unknown = JSON.parse(await this.run(["plugin", "list", "--marketplace", identity.marketplace, "--available", "--json"]));
+    if (!isRecord(result) || !Array.isArray(result.installed)) throw new Error("Codex 返回的插件状态不受支持");
+    const available = Array.isArray(result.available) ? result.available : [];
+    const item = [...result.installed, ...available].find((value): value is Record<string, unknown> => isRecord(value) && value.pluginId === identity.pluginId);
+    const source = item && isRecord(item.marketplaceSource) && typeof item.marketplaceSource.source === "string"
+      ? item.marketplaceSource.source
+      : undefined;
+    return { installed: item?.installed === true, enabled: item?.enabled === true, source, cached: (await readAssetFiles(identity.cache)).size > 0 };
   }
   async validate(name: string, receipt: UserAssetReceipt): Promise<string[]> {
     const identity = this.identity(name);
@@ -106,8 +127,10 @@ export class CodexPluginHost {
   async install(name: string, destination: string, sourceFiles: Map<string, Buffer>): Promise<NonNullable<UserAssetReceipt["host"]>> {
     const identity = this.identity(name);
     await this.run(["plugin", "marketplace", "add", destination]);
-    const result = JSON.parse(await this.run(["plugin", "add", identity.pluginId, "--json"]));
-    if (result.pluginId !== identity.pluginId || typeof result.installedPath !== "string" || path.dirname(result.installedPath) !== identity.cache) throw new Error("Codex 安装结果与目标不一致");
+    const result: unknown = JSON.parse(await this.run(["plugin", "add", identity.pluginId, "--json"]));
+    if (!isRecord(result) || result.pluginId !== identity.pluginId || typeof result.installedPath !== "string" || path.dirname(result.installedPath) !== identity.cache) {
+      throw new Error("Codex 安装结果与目标不一致");
+    }
     const installed = await readAssetFiles(result.installedPath);
     for (const [file, bytes] of sourceFiles) if (!installed.get(file)?.equals(bytes)) throw new Error(`Codex 未正确安装源文件：${file}`);
     const state = await this.inspect(name);

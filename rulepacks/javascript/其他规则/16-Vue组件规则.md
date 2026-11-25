@@ -18,6 +18,7 @@
 - 🟡 项目已使用 `<script setup>` 时，沿用其编译宏和目录约定；不能把 Options API 与 Composition API 混杂为新的默认风格。
 - 🔴 `defineProps`、`defineEmits`、`defineExpose` 和 `withDefaults` 的版本可用性以项目 Vue/编译器版本为准。
 - 🟡 Vue 3.3+ 支持 `defineEmits<{ change: [enabled: boolean] }>()` 具名元组语法；更早版本使用下面的调用签名形式。
+- 🟡 Vue 3.5+ 已默认稳定支持响应式 Props 解构（如 `const { enabled = false } = defineProps<{ enabled?: boolean }>()`），解构出的变量在 `<script setup>` 内保持响应式并可直接写默认值（传给外部函数或 `watch` 时需写成 getter `() => enabled`）；Vue 3.4 及更早版本请使用 `props.xxx` 与 `withDefaults`，避免直接解构导致响应性丢失。
 - 🔴 Props 用于输入，Emits 用于向父组件通知；不要通过隐式修改 props 或暴露内部响应式对象绕过边界。
 
 ```vue

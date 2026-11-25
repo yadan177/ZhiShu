@@ -14,6 +14,7 @@
 3. XR Plug-in Management、Player Settings、OpenXR Feature、目标平台与构建脚本。
 4. 现有命名空间、组件、Prefab、Scene 和平台条件编译所体现的 SDK 路线。
 5. 目标设备、PICO OS、已安装 SDK 版本及项目已有真机验证记录。
+6. `.agent-rules/overrides.md` 中的项目覆盖规则（如存在）。
 
 - 🔴 项目已经选择并使用某条 SDK 路线时，必须沿用现有路线，除非用户明确授权迁移。
 - 🔴 不得因为用户提到某个关键词就自动安装、替换或混用 SDK。
@@ -58,6 +59,7 @@ SDK、Unity、PICO OS 和设备兼容结论必须附官方来源与核验日期�
 - 🔴 Plane Detection、Environment Depth、透视、空间锚点、场景理解、手势或平台服务等能力，必须先确认当前路线、SDK、设备和 PICO OS 支持范围。
 - 🔴 不得把 PICO XR 的组件、菜单路径或 API 套到 Unity OpenXR/PICO Spatial，反之亦然。
 - 🔴 资源、订阅、回调、主线程分发和 SDK 会话必须有明确生命周期、取消和释放路径；非直观限制要与代码并行维护注释。
+- 🟡 若项目已安装 `xr-common` 或 `ta-vfx-shader` 规则包，涉及帧率热稳态、防眩晕、MR 透视安全边界时同步核对 `.agent-rules/xr-common/15-AI通用入口规则.md`；涉及 Single-Pass Instanced 立体渲染、URP 合批与 Overdraw 预算时同步核对 `.agent-rules/ta-vfx-shader/15-AI通用入口规则.md`。
 
 ## 6. SDK 迁移
 
@@ -71,7 +73,7 @@ SDK 路线迁移属于高影响变更，未经明确授权不得执行。迁移�
 
 ## 7. 调试、验证与交付
 
-- 🔴 先运行项目和当前 SDK 已提供的配置检查或 Project Validation，再依据实际错误、日志和设备状态定位问题。
+- 🔴 先运行项目和当前 SDK 已提供的配置检查或 Project Validation，再依据实际错误、日志和设备状态定位问题；复杂 Bug、黑屏或首次流程异常按 `.agent-rules/unity/其他规则/16-问题定位与根因确认规则.md` 先确认根因再修复。
 - 🔴 Unity Editor、模拟器或串流预览成功不能替代 Android 包和目标 PICO 设备验证。
-- 🔴 构建后记录 Unity、SDK、设备、PICO OS、构建后端、ABI 和实际验证能力；无法真机验证时明确未验证范围。
+- 🔴 构建后记录 Unity、SDK、设备、PICO OS、构建后端、ABI 和实际验证能力；无法真机验证时明确未验证范围。若项目已安装 `xr-common` 规则包，真机验证与交付记录可按 `.agent-rules/xr-common/其他规则/03-真机验证与跨岗位协同基线.md` 补全 L1–L4 字段。
 - 🔴 交付时说明沿用或选择的 SDK 路线、证据来源、版本核验日期、配置变化、迁移授权、验证结果和剩余风险。

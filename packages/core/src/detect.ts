@@ -33,22 +33,21 @@ async function packageJsonEvidence(root: string): Promise<{
   result.javascript = { path: "package.json", reason: "存在 Node.js package manifest" };
 
   try {
-    const parsed = JSON.parse(await readFile(packagePath, "utf8")) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    const dependencies = {
-      ...parsed.dependencies,
-      ...parsed.devDependencies,
-    };
-    if (dependencies.typescript) {
-      result.typescript = {
-        path: "package.json",
-        reason: "项目依赖中声明了 TypeScript",
-      };
+    const parsed: unknown = JSON.parse(await readFile(packagePath, "utf8"));
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      const hasTypescript = (deps: unknown): boolean =>
+        typeof deps === "object" && deps !== null && !Array.isArray(deps) &&
+        typeof (deps as Record<string, unknown>).typescript === "string";
+      if (hasTypescript(record.dependencies) || hasTypescript(record.devDependencies)) {
+        result.typescript = {
+          path: "package.json",
+          reason: "项目依赖中声明了 TypeScript",
+        };
+      }
     }
   } catch {
-    // A malformed package.json is still evidence of a JavaScript project.
+    // 损坏的 package.json 仍作为 JavaScript 项目存在性的证据保留。
   }
 
   return result;

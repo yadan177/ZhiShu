@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const [tag, sourceCommit, destination = "agentrulekit-release.json"] = process.argv.slice(2);
+const [tag, sourceCommit, destination = "zhishu-release.json"] = process.argv.slice(2);
 if (!/^v\d+\.\d+\.\d+$/.test(tag ?? "")) throw new Error(`非法版本标签：${tag}`);
 if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(sourceCommit ?? "")) throw new Error("来源提交必须是完整 Git SHA");
 

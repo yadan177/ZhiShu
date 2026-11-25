@@ -12,7 +12,7 @@ import { applyProject, initializeGithubProject, planProject, validateProject } f
 import { testAdapter } from "./test-adapter.js";
 
 test("GitHub Release 资产经 SHA-256 验证后才解包", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-release-test-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-release-test-"));
   try {
     const pack = path.join(root, "rulepacks", "common");
     await mkdir(pack, { recursive: true });
@@ -20,20 +20,20 @@ test("GitHub Release 资产经 SHA-256 验证后才解包", async () => {
     await writeFile(path.join(pack, "pack.json"), manifest);
     await writeFile(path.join(pack, "entry.md"), "# 远程规则\n");
     const sourceCommit = "a".repeat(40);
-    await writeFile(path.join(root, "agentrulekit-release.json"), JSON.stringify({ schemaVersion: 1, version: "0.2.0", sourceCommit }));
+    await writeFile(path.join(root, "zhishu-release.json"), JSON.stringify({ schemaVersion: 1, version: "0.2.0", sourceCommit }));
     await writeFile(path.join(root, "LICENSE"), "Apache License\nVersion 2.0\n");
     const archive = path.join(root, "asset.tar.gz");
-    await c({ gzip: true, file: archive, cwd: root }, ["agentrulekit-release.json", "LICENSE", "rulepacks"]);
+    await c({ gzip: true, file: archive, cwd: root }, ["zhishu-release.json", "LICENSE", "rulepacks"]);
     const bytes = await readFile(archive);
     const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    const url = "https://github.com/yadan177/AgentRuleKit/releases/download/v0.2.0/agentrulekit-rulepacks.tar.gz";
+    const url = "https://github.com/yadan177/ZhiShu/releases/download/v0.2.0/zhishu-rulepacks.tar.gz";
     const fakeFetch = (async (input: unknown) => {
       if (String(input).includes("api.github.com")) {
-        return new Response(JSON.stringify({ tag_name: "v0.2.0", assets: [{ name: "agentrulekit-rulepacks.tar.gz", browser_download_url: url, digest, size: bytes.length }] }), { status: 200 });
+        return new Response(JSON.stringify({ tag_name: "v0.2.0", assets: [{ name: "zhishu-rulepacks.tar.gz", browser_download_url: url, digest, size: bytes.length }] }), { status: 200 });
       }
       return new Response(new Uint8Array(bytes), { status: 200 });
     }) as typeof fetch;
-    const release = await findLatestRelease("yadan177/AgentRuleKit", fakeFetch);
+    const release = await findLatestRelease("yadan177/ZhiShu", fakeFetch);
     const downloaded = await downloadRulepacks(release, fakeFetch);
     try {
       assert.equal(downloaded.version, "0.2.0");
@@ -44,8 +44,8 @@ test("GitHub Release 资产经 SHA-256 验证后才解包", async () => {
       await mkdir(target);
       const config = await initializeGithubProject(target, testAdapter, {
         root: downloaded.sourceRoot, version: downloaded.version, digest: release.digest, commit: downloaded.sourceCommit,
-      }, "yadan177/AgentRuleKit");
-      assert.deepEqual(config.source, { type: "github", repository: "yadan177/AgentRuleKit" });
+      }, "yadan177/ZhiShu");
+      assert.deepEqual(config.source, { type: "github", repository: "yadan177/ZhiShu" });
       const lock = JSON.parse(await readFile(path.join(target, ".agent-rules.lock.json"), "utf8"));
       assert.equal(lock.sourceType, "github");
       assert.equal(lock.sourceDigest, release.digest);
@@ -72,13 +72,13 @@ test("GitHub Release 资产经 SHA-256 验证后才解包", async () => {
 
 test("网络错误和损坏的 Release 归档会在写入项目之前失败", async () => {
   const unavailable = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
-  await assert.rejects(findLatestRelease("yadan177/AgentRuleKit", unavailable), /HTTP 503/);
-  const incomplete = (async () => new Response(JSON.stringify({ tag_name: "v0.2.0", assets: [{ name: "agentrulekit-rulepacks.tar.gz", browser_download_url: "https://github.com/yadan177/AgentRuleKit/releases/download/v0.2.0/agentrulekit-rulepacks.tar.gz", digest: `sha256:${"a".repeat(64)}` }] }), { status: 200 })) as typeof fetch;
-  await assert.rejects(findLatestRelease("yadan177/AgentRuleKit", incomplete), /体积超限/);
+  await assert.rejects(findLatestRelease("yadan177/ZhiShu", unavailable), /HTTP 503/);
+  const incomplete = (async () => new Response(JSON.stringify({ tag_name: "v0.2.0", assets: [{ name: "zhishu-rulepacks.tar.gz", browser_download_url: "https://github.com/yadan177/ZhiShu/releases/download/v0.2.0/zhishu-rulepacks.tar.gz", digest: `sha256:${"a".repeat(64)}` }] }), { status: 200 })) as typeof fetch;
+  await assert.rejects(findLatestRelease("yadan177/ZhiShu", incomplete), /体积超限/);
   const bytes = Buffer.from("not a tar archive");
   const release = {
     version: "0.2.0",
-    assetUrl: "https://github.com/yadan177/AgentRuleKit/releases/download/v0.2.0/agentrulekit-rulepacks.tar.gz",
+    assetUrl: "https://github.com/yadan177/ZhiShu/releases/download/v0.2.0/zhishu-rulepacks.tar.gz",
     digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
   };
   await assert.rejects(downloadRulepacks(release, unavailable), /HTTP 503/);
@@ -93,11 +93,11 @@ test("stable Release 版本按数值比较并拒绝倒退", async () => {
   assert.throws(() => assertReleaseNotOlder({ sourceVersion: "1.0.0" }, { version: "0.99.99" }), /拒绝自动降级/);
   assert.throws(() => assertReleaseNotOlder({ sourceVersion: "0.1.0-beta" }, { version: "0.1.0" }), /非 stable/);
   const prerelease = (async () => new Response(JSON.stringify({ tag_name: "v0.2.0-beta.1", assets: [] }), { status: 200 })) as typeof fetch;
-  await assert.rejects(findLatestRelease("yadan177/AgentRuleKit", prerelease), /不符合 stable/);
+  await assert.rejects(findLatestRelease("yadan177/ZhiShu", prerelease), /不符合 stable/);
 });
 
 test("Release 与所选规则包版本不一致时不修改业务工程", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-release-pack-version-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-release-pack-version-"));
   try {
     const pack = path.join(root, "source", "rulepacks", "common");
     const target = path.join(root, "target");
@@ -109,7 +109,7 @@ test("Release 与所选规则包版本不一致时不修改业务工程", async 
     await writeFile(userFile, "业务文件\n");
     await assert.rejects(initializeGithubProject(target, testAdapter, {
       root: path.join(root, "source"), version: "0.2.0", digest: `sha256:${"a".repeat(64)}`, commit: "b".repeat(40),
-    }, "yadan177/AgentRuleKit"), /拒绝安装版本不一致/);
+    }, "yadan177/ZhiShu"), /拒绝安装版本不一致/);
     assert.equal(await readFile(userFile, "utf8"), "业务文件\n");
     await assert.rejects(readFile(path.join(target, "agent-rules.yaml"), "utf8"), /ENOENT/);
     await assert.rejects(readFile(path.join(target, ".agent-rules.lock.json"), "utf8"), /ENOENT/);
@@ -119,13 +119,13 @@ test("Release 与所选规则包版本不一致时不修改业务工程", async 
 });
 
 test("Release 归档缺少来源提交或与版本不符时拒绝安装", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-provenance-test-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-provenance-test-"));
   try {
     const pack = path.join(root, "rulepacks", "common");
     await mkdir(pack, { recursive: true });
     await writeFile(path.join(pack, "pack.json"), JSON.stringify({ id: "common", version: "0.2.0", status: "ready", kind: "common", entry: "entry.md", dependencies: [], rules: ["entry.md"] }));
     await writeFile(path.join(pack, "entry.md"), "# 规则\n");
-    const assetUrl = "https://github.com/yadan177/AgentRuleKit/releases/download/v0.2.0/agentrulekit-rulepacks.tar.gz";
+    const assetUrl = "https://github.com/yadan177/ZhiShu/releases/download/v0.2.0/zhishu-rulepacks.tar.gz";
     const attempt = async (entries: string[], expected: RegExp) => {
       const archive = path.join(root, "invalid.tar.gz");
       await c({ gzip: true, file: archive, cwd: root }, entries);
@@ -135,22 +135,22 @@ test("Release 归档缺少来源提交或与版本不符时拒绝安装", async 
       await assert.rejects(downloadRulepacks({ version: "0.2.0", assetUrl, digest }, fetcher), expected);
     };
     await attempt(["rulepacks"], /缺少来源提交记录/);
-    await writeFile(path.join(root, "agentrulekit-release.json"), JSON.stringify({ schemaVersion: 1, version: "0.3.0", sourceCommit: "a".repeat(40) }));
-    await attempt(["agentrulekit-release.json", "rulepacks"], /版本不匹配/);
-    await writeFile(path.join(root, "agentrulekit-release.json"), JSON.stringify({ schemaVersion: 1, version: "0.2.0", sourceCommit: "a".repeat(40) }));
-    await attempt(["agentrulekit-release.json", "agentrulekit-release.json", "rulepacks"], /重复条目/);
+    await writeFile(path.join(root, "zhishu-release.json"), JSON.stringify({ schemaVersion: 1, version: "0.3.0", sourceCommit: "a".repeat(40) }));
+    await attempt(["zhishu-release.json", "rulepacks"], /版本不匹配/);
+    await writeFile(path.join(root, "zhishu-release.json"), JSON.stringify({ schemaVersion: 1, version: "0.2.0", sourceCommit: "a".repeat(40) }));
+    await attempt(["zhishu-release.json", "zhishu-release.json", "rulepacks"], /重复条目/);
     await symlink("rulepacks/common/entry.md", path.join(root, "LICENSE"));
-    await attempt(["agentrulekit-release.json", "LICENSE", "rulepacks"], /不安全条目/);
+    await attempt(["zhishu-release.json", "LICENSE", "rulepacks"], /不安全条目/);
     await rm(path.join(root, "LICENSE"));
     await writeFile(path.join(root, "LICENSE"), randomBytes(64 * 1024 + 1));
-    await attempt(["agentrulekit-release.json", "LICENSE", "rulepacks"], /不安全条目/);
+    await attempt(["zhishu-release.json", "LICENSE", "rulepacks"], /不安全条目/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("模拟两个 Release 的远程安装、差异预览与显式更新", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-release-update-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-release-update-"));
   try {
     async function bundle(version: string, sourceCommit: string, rule: string, license?: string) {
       const directory = path.join(root, `bundle-${version}`);
@@ -158,14 +158,14 @@ test("模拟两个 Release 的远程安装、差异预览与显式更新", async
       await mkdir(pack, { recursive: true });
       await writeFile(path.join(pack, "pack.json"), JSON.stringify({ id: "common", version, status: "ready", kind: "common", entry: "entry.md", dependencies: [], rules: ["entry.md"] }));
       await writeFile(path.join(pack, "entry.md"), rule);
-      await writeFile(path.join(directory, "agentrulekit-release.json"), JSON.stringify({ schemaVersion: 1, version, sourceCommit }));
+      await writeFile(path.join(directory, "zhishu-release.json"), JSON.stringify({ schemaVersion: 1, version, sourceCommit }));
       if (license) await writeFile(path.join(directory, "LICENSE"), license);
       const archive = path.join(directory, "asset.tar.gz");
-      await c({ gzip: true, file: archive, cwd: directory }, ["agentrulekit-release.json", ...(license ? ["LICENSE"] : []), "rulepacks"]);
+      await c({ gzip: true, file: archive, cwd: directory }, ["zhishu-release.json", ...(license ? ["LICENSE"] : []), "rulepacks"]);
       const bytes = await readFile(archive);
       const release = {
         version,
-        assetUrl: `https://github.com/yadan177/AgentRuleKit/releases/download/v${version}/agentrulekit-rulepacks.tar.gz`,
+        assetUrl: `https://github.com/yadan177/ZhiShu/releases/download/v${version}/zhishu-rulepacks.tar.gz`,
         digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
       };
       const fetcher = (async () => new Response(new Uint8Array(bytes), { status: 200 })) as typeof fetch;
@@ -179,7 +179,7 @@ test("模拟两个 Release 的远程安装、差异预览与显式更新", async
     try {
       config = await initializeGithubProject(target, testAdapter, {
         root: initial.sourceRoot, version: initial.version, digest: first.release.digest, commit: initial.sourceCommit,
-      }, "yadan177/AgentRuleKit");
+      }, "yadan177/ZhiShu");
     } finally {
       await initial.cleanup();
     }

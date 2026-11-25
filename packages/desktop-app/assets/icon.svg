@@ -1,0 +1,37 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="w1_bg" x1="28" y1="8" x2="228" y2="248" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="72%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F6F9FD"/>
+    </linearGradient>
+    <linearGradient id="w1_g3" x1="46" y1="118" x2="158" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="w1_g0" x1="138" y1="48" x2="212" y2="160" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#1668E8"/>
+    </linearGradient>
+    <linearGradient id="w1_g1" x1="202" y1="138" x2="94" y2="214" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1D4ED8"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="w1_g2" x1="116" y1="204" x2="42" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#4F46E5"/>
+    </linearGradient>
+    <linearGradient id="w1_spark" x1="104" y1="104" x2="152" y2="152" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="50%" stop-color="#1668E8"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#w1_bg)"/>
+  <path d="M64 8H192C222.928 8 248 33.072 248 64V192C248 222.928 222.928 248 192 248H64C33.072 248 8 222.928 8 192V64C8 33.072 33.072 8 64 8ZM64 9.2C33.735 9.2 9.2 33.735 9.2 64V192C9.2 222.265 33.735 246.8 64 246.8H192C222.265 246.8 246.8 222.265 246.8 192V64C246.8 33.735 222.265 9.2 192 9.2H64Z" fill-rule="evenodd" fill="#E2E8F0" fill-opacity="0.85"/>
+  <path d="M 139.74 87.84 L 169.06 58.51 Q 174.37 53.21 180.57 57.43 A 88.00 88.00 0 0 1 210.19 159.46 Q 207.21 166.34 201.91 161.04 L 139.74 98.87 Q 134.22 93.35 139.74 87.84 Z" fill="url(#w1_g0)"/>
+  <path d="M 168.16 139.74 L 197.49 169.06 Q 202.79 174.37 198.57 180.57 A 88.00 88.00 0 0 1 96.54 210.19 Q 89.66 207.21 94.96 201.91 L 157.13 139.74 Q 162.65 134.22 168.16 139.74 Z" fill="url(#w1_g1)"/>
+  <path d="M 116.26 168.16 L 86.94 197.49 Q 81.63 202.79 75.43 198.57 A 88.00 88.00 0 0 1 45.81 96.54 Q 48.79 89.66 54.09 94.96 L 116.26 157.13 Q 121.78 162.65 116.26 168.16 Z" fill="url(#w1_g2)"/>
+  <path d="M 87.84 116.26 L 58.51 86.94 Q 53.21 81.63 57.43 75.43 A 88.00 88.00 0 0 1 159.46 45.81 Q 166.34 48.79 161.04 54.09 L 98.87 116.26 Q 93.35 121.78 87.84 116.26 Z" fill="url(#w1_g3)"/>
+  <path d="M 128 99 Q 131.8 124.2 157 128 Q 131.8 131.8 128 157 Q 124.2 131.8 99 128 Q 124.2 124.2 128 99 Z" fill="url(#w1_spark)"/>
+</svg>

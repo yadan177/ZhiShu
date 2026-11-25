@@ -1,12 +1,15 @@
 {
   "$schema": "../../schemas/rulepack.schema.json",
   "id": "common",
-  "version": "0.1.5",
+  "version": "2.0.0",
   "status": "ready",
   "kind": "common",
   "entry": "entry.md",
   "dependencies": [],
   "rules": [
+    "01-Git版本控制规范.md",
+    "02-软件版本迭代与发布管理规范.md",
+    "03-跨端接口契约与联调规范.md",
     "entry.md"
   ]
 }

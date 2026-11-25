@@ -1,13 +1,14 @@
 {
   "$schema": "../../schemas/adapter.schema.json",
   "id": "codex",
-  "version": "0.1.5",
+  "version": "2.0.0",
   "status": "implemented",
   "capabilities": {
     "rules": "project-entry-implemented",
-    "skills": "ide-user-delivery-not-implemented",
+    "skills": "~/.agents/skills/<name>",
+    "plugins": "codex-cli-personal-marketplace",
+    "mcp": "~/.codex/config.toml",
     "commands": "delivery-not-implemented",
-    "mcp": "delivery-not-implemented",
     "hooks": "delivery-not-implemented"
   },
   "outputs": {

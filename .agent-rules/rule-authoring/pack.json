@@ -1,0 +1,13 @@
+{
+  "id": "rule-authoring",
+  "version": "2.0.0",
+  "status": "ready",
+  "kind": "common",
+  "entry": "规则文档编写格式规范.md",
+  "dependencies": [
+    "common"
+  ],
+  "rules": [
+    "规则文档编写格式规范.md"
+  ]
+}

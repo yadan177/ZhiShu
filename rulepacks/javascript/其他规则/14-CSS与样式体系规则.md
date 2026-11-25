@@ -33,15 +33,15 @@ import styles from './Card.module.css'; // 这里用 CSS Modules
 ### 1.2 !important 滥用（优先级战争）
 
 ```css
-// ❌ 错误：为了覆盖样式乱加 !important，最后全都是 !important
+/* ❌ 错误：为了覆盖样式乱加 !important，最后全都是 !important */
 .btn {
   color: blue !important;
 }
 .header .btn {
-  color: red !important; // 你加我也加，比谁的优先级高
+  color: red !important; /* 你加我也加，比谁的优先级高 */
 }
 #app .header .btn {
-  color: green !important; // 最后全是 !important 没人敢改
+  color: green !important; /* 最后全是 !important 没人敢改 */
 }
 ```
 
@@ -54,11 +54,11 @@ import styles from './Card.module.css'; // 这里用 CSS Modules
 ### 1.3 z-index 随便写（没有分层体系）
 
 ```css
-// ❌ 错误：z-index 乱加，最后不知道谁在谁上面
+/* ❌ 错误：z-index 乱加，最后不知道谁在谁上面 */
 .modal { z-index: 9999; }
-.tooltip { z-index: 10000; } // 比 modal 高
-.dropdown { z-index: 99999; } // 我要比 tooltip 更高
-.loading { z-index: 999999; } // 大家一起比谁大
+.tooltip { z-index: 10000; } /* 比 modal 高 */
+.dropdown { z-index: 99999; } /* 我要比 tooltip 更高 */
+.loading { z-index: 999999; } /* 大家一起比谁大 */
 /* 最后变成猜数字游戏，谁也不知道谁该在上面 */
 ```
 
@@ -95,16 +95,16 @@ import styles from './Card.module.css'; // 这里用 CSS Modules
 
 ---
 
-### 1.5 选择器嵌套超过 3 层
+### 1.5 选择器嵌套过深与 DOM 结构强耦合
 
 ```css
-// ❌ 错误：嵌套过深，和 HTML 结构强耦合，重构 HTML 就全崩
+/* ❌ 错误：嵌套过深，和 HTML 结构强耦合，重构 HTML 就全崩 */
 .page {
   .header {
     .nav {
       .menu {
         .item {
-          .link { // 嵌套 6 层了！HTML 一改这里就废
+          .link { /* 嵌套 6 层了！HTML 一改这里就废 */
             color: blue;
             &:hover { color: red; }
           }
@@ -126,7 +126,7 @@ import styles from './Card.module.css'; // 这里用 CSS Modules
 ### 1.6 魔法颜色值（到处写 #fff / #000）
 
 ```css
-// ❌ 错误：同一个颜色写 100 次，改主题色要全局替换
+/* ❌ 错误：同一个颜色写 100 次，改主题色要全局替换 */
 .btn { background-color: #1890ff; }
 .link { color: #1890ff; }
 .badge { background-color: #1890ff; }
@@ -143,29 +143,28 @@ import styles from './Card.module.css'; // 这里用 CSS Modules
 ### 1.7 全局样式没有命名空间
 
 ```css
-// ❌ 错误：全局写 .btn / .card，第三方库/别人的代码和你冲突
+/* ❌ 错误：在共享全局样式作用域中直接写 .btn / .card，易与第三方 UI 库或微前端子应用冲突 */
 .btn {
   padding: 8px 16px;
   border-radius: 4px;
 }
-/* 结果：引入的 UI 库也叫 .btn，样式互相覆盖，谁也说不清 */
+/* 结果：引入的 UI 库或宿主应用也定义了 .btn，样式互相覆盖，难以排查 */
 ```
 
 > 📌 规则：
-> - **自定义全局样式必须加命名空间前缀**
-> - 比如 `.myapp-btn` / `.acme-card`，不要直接写通用名词
-> - 用 CSS-in-JS / CSS Modules 的自动 scoped 最好
+> - 当应用与第三方 UI 组件库、微前端/宿主页面、嵌入式脚本或历史全局样式共享同一全局样式表时，自定义全局类应加命名空间前缀（如 `.myapp-btn` / `.acme-card`）或通过 `@layer` 隔离。
+> - 优先复用项目已采用的样式隔离方案（CSS Modules / Scoped CSS / Shadow DOM / CSS-in-JS）；完全独立且无全局类名冲突风险的应用不必机械为每个类名追加前缀。
 
 ## 2. 🟡 推荐 · 这些写法尽量避免
 
-### 2.8 重复的 Tailwind 原子类组合
+### 2.1 重复的 Tailwind 原子类组合
 
 ```jsx
-// ❌ 错误：同一个组合的原子类重复写 N 次,改一个地方要改 10 处
+// ❌ 错误：同一个组合的原子类重复写 N 次，改一个地方要改 10 处
 <div className="flex items-center justify-between p-4 bg-white rounded-lg shadow">...</div>
 <div className="flex items-center justify-between p-4 bg-white rounded-lg shadow">...</div>
 <div className="flex items-center justify-between p-4 bg-white rounded-lg shadow">...</div>
-/* 每个卡片都写一遍,某天要把 p-4 改成 p-6,你得找全 */
+// 每个卡片都写一遍，某天要把 p-4 改成 p-6，你得找全
 ```
 
 ```jsx
@@ -177,8 +176,10 @@ function Card({ children }) {
     </div>
   );
 }
+```
 
-// 项目已经采用并支持 @apply 时，也可以提取样式
+```css
+/* 项目已经采用并支持 @apply 时，也可以在样式表中提取语义类 */
 .card {
   @apply flex items-center justify-between p-4 bg-white rounded-lg shadow;
 }
@@ -188,10 +189,10 @@ function Card({ children }) {
 
 ---
 
-### 2.9 响应式断点不统一
+### 2.2 响应式断点不统一
 
 ```css
-// ❌ 错误：每个组件自己写断点，最后项目里有 768px / 750px / 800px 各种值
+/* ❌ 错误：每个组件自己写断点，最后项目里有 768px / 750px / 800px 各种值 */
 @media (max-width: 768px) { /* ... */ }
 @media (max-width: 750px) { /* 另一个组件 */ }
 @media (max-width: 800px) { /* 又一个组件 */ }
@@ -204,15 +205,22 @@ function Card({ children }) {
 
 ---
 
-### 2.10 单位混用（px / rem / em 乱换）
+### 2.3 单位混用（px / rem / em 乱换）
 
 ```css
-// ❌ 错误：同一个组件里 px rem em 混用，没人知道为什么这么写
+/* ❌ 错误：同一类维度（间距/字号）无依据地混用 px / rem / em，后续维护难以预测缩放行为 */
 .card {
-  padding: 1rem; // rem
-  margin: 16px;  // px
-  font-size: 1em; // em
-  line-height: 1.5; // 无单位
+  padding: 1rem;     /* 相对根字号 */
+  margin: 16px;      /* 同为间距却切回固定像素 */
+  font-size: 1em;    /* 随父元素字号叠加，多层嵌套易漂移 */
+}
+
+/* ✅ 正确：按语义统一单位（行高本身推荐使用无单位倍数，不视为混用反例） */
+.card {
+  padding: 1rem;
+  margin: 1rem;
+  font-size: 1rem;
+  line-height: 1.5;  /* 无单位行高按当前字号比例继承，属于推荐写法 */
 }
 ```
 

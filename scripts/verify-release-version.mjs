@@ -14,6 +14,7 @@ for (const file of [
   "packages/core/package.json",
   "adapters/codex/package.json",
   "packages/cli/package.json",
+  "adapters/antigravity/adapter.json",
   "adapters/codex/adapter.json",
   "adapters/qoder/adapter.json",
   "adapters/cursor/adapter.json",
@@ -40,4 +41,12 @@ async function inspectPacks(directory) {
 }
 
 await inspectPacks("rulepacks");
-console.log(`发布版本 ${tag}：核心、规则入口适配器、CLI 与全部规则包一致`);
+
+for (const entry of await readdir("plugins", { withFileTypes: true })) {
+  if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+  const manifestPath = path.join("plugins", entry.name, "plugin.json");
+  const plugin = await json(manifestPath);
+  if (plugin.version !== version) throw new Error(`${manifestPath} 版本 ${plugin.version} 与 ${tag} 不一致`);
+}
+
+console.log(`发布版本 ${tag}：核心、规则入口适配器、CLI、全部规则包与岗位插件一致`);

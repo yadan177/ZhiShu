@@ -1,9 +1,9 @@
 {
-  "name": "agent-rule-kit",
-  "version": "0.1.5",
+  "name": "zhishu-workspace",
+  "version": "2.0.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "独立多项目 AI 开发工具箱，规划以场景插件组合规则、Skills 与跨 IDE 能力",
+  "description": "独立多项目 智枢，规划以场景插件组合规则、Skills 与跨 IDE 能力",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -13,16 +13,18 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run build --workspace @agentrulekit/core && npm run build --workspace @agentrulekit/adapter-codex && npm run build --workspace agentrulekit",
-    "check": "npm run check:rulepacks && npm run build && npm run test",
+    "build": "npm run build --workspace @zhishu/core && npm run build --workspace @zhishu/adapter-codex && npm run build --workspace zhishu",
+    "check": "npm run check:rulepacks && npm run check:plugins && npm run check:consistency && npm run build && npm run test",
+    "check:consistency": "node scripts/validate-consistency.mjs",
+    "check:plugins": "node scripts/validate-plugins.mjs",
     "check:rulepacks": "node scripts/validate-rulepacks.mjs && node scripts/generate-provenance-inventory.mjs --check",
     "clean": "npm run clean --workspaces --if-present",
-    "dev": "npm run dev --workspace agentrulekit --",
+    "dev": "npm run dev --workspace zhishu --",
     "smoke:public": "npm run build && node scripts/verify-public-cli-smoke.mjs",
     "smoke:npm": "node scripts/verify-public-cli-smoke.mjs --from-npm",
     "manifests": "node scripts/generate-rulepack-manifests.mjs",
-    "test": "npm run test --workspaces --if-present && node --test scripts/tests/cli-e2e.test.mjs scripts/tests/remote-cli-e2e.test.mjs scripts/tests/package-install.test.mjs scripts/tests/rulepacks-validation.test.mjs scripts/tests/release-manifest.test.mjs scripts/tests/publication-gates.test.mjs",
-    "typecheck": "npm run typecheck --workspace @agentrulekit/core && npm run build --workspace @agentrulekit/core && npm run typecheck --workspace @agentrulekit/adapter-codex && npm run build --workspace @agentrulekit/adapter-codex && npm run typecheck --workspace agentrulekit",
+    "test": "npm run test --workspaces --if-present && node --test scripts/tests/cli-e2e.test.mjs scripts/tests/remote-cli-e2e.test.mjs scripts/tests/package-install.test.mjs scripts/tests/rulepacks-validation.test.mjs scripts/tests/consistency-validation.test.mjs scripts/tests/release-manifest.test.mjs scripts/tests/publication-gates.test.mjs",
+    "typecheck": "npm run typecheck --workspace @zhishu/core && npm run build --workspace @zhishu/core && npm run typecheck --workspace @zhishu/adapter-codex && npm run build --workspace @zhishu/adapter-codex && npm run typecheck --workspace zhishu",
     "validate": "npm run check"
   },
   "devDependencies": {

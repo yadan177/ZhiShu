@@ -7,6 +7,8 @@
 
 ## 1. 路径与方法
 
+> 跨语言、跨端通用的契约先行、字段/时间/金额对齐、错误码与 `requestId`、并行联调及向下兼容红线见 [03 - 跨端接口契约与联调规范](../../common/03-跨端接口契约与联调规范.md)；本文件聚焦 Go HTTP / gRPC 落地细则。
+
 ### 1.1 REST 风格路由命名
 
 🔴 必加约束
@@ -29,7 +31,7 @@ DELETE /api/v1/users/{id}     # 删除
 | **不用动词** | `/createUser` → `POST /users` |
 | **层级不超过 3 层** | `/users/{id}/orders/{oid}/items` → 拆为 `/orders?user_id={id}` |
 | **不要在路径中放操作名** | `/users/activate` → `POST /users/{id}/activate` 勉强可以，但更好的设计是 `PATCH /users/{id}` + `{"status":"active"}` |
-| **查询参数用于过滤/排序/分页** | `GET /users?status=active&page=2&size=20` |
+| **查询参数用于过滤/排序/分页** | `GET /users?status=active&page=2&page_size=20`（参数名以项目 API 契约为准） |
 
 ```text
 // 反例
@@ -90,7 +92,7 @@ DELETE /users/123
 
 ### 2.1 JSON 字段命名
 
-🔴 必加约束
+🔴 必加约束（若项目既有 API 契约已统一采用 `snake_case` 或其他格式，优先沿用既有契约；新接口按以下基线执行）
 
 | 规则 | 示例 |
 |---|---|
@@ -118,7 +120,7 @@ type User struct {
 }
 ```
 
-> 相关规则：[01 - 代码编写规则：7.1 序列化结构体使用字段标签](01-代码编写规则.md#71-序列化结构体使用字段标签)。原标注的“源材料：序列化结构体使用字段标签.md”未找到对应独立文件；本节 `User` 示例的最初来源仍待核对。
+> 相关规则：[01 - 代码编写规则：7.1 序列化结构体使用字段标签](01-代码编写规则.md#71-序列化结构体使用字段标签)。
 
 ### 2.2 `omitempty` 规则
 
@@ -151,7 +153,8 @@ type Config struct {
 
 | 场景 | 标签 |
 |---|---|
-| 零值=未设置（字符串、时间） | `json:"field,omitempty"` |
+| 零值=未设置（字符串） | `json:"field,omitempty"` |
+| 可选时间字段（`time.Time`） | 指针 `*time.Time` + `json:"field,omitempty"`，或 Go 1.24+ 使用 `json:"field,omitzero"` |
 | 零值是合法值（int/bool 可能是 0/false） | `json:"field"` 或用指针 + `omitempty` |
 | 前端需要空数组而非 null | `json:"field"` + 初始化为 `make([]T, 0)` |
 
@@ -171,7 +174,7 @@ type CreateUserRequest struct {
 - **POST/PUT/PATCH 用 JSON body**，不用 form-urlencoded（除非是文件上传）
 - **路径参数**放 URL 中，**业务参数**放 body 中
 - **可选字段用指针** `*T` + `omitempty`（区分"未传"和"传了零值"）
-- **请求体 ≤ 1MB**（在 handler 层拦截，返回 `413 Request Entity Too Large`）
+- **显式限制请求体大小**：按端点业务场景配置上限（如普通 JSON 接口默认 1MB，文件上传或批量导入接口单独放宽），超限时在 handler 层拦截并返回 `413 Content Too Large`（RFC 9110；Go 标准库常量为 `http.StatusRequestEntityTooLarge`）
 
 ```go
 // handler 中限制请求体大小
@@ -208,7 +211,7 @@ type ListResponse struct {
 
 ### 2.5 分页
 
-🔴 必加约束
+🔴 必加约束（分页参数命名与上限优先沿用项目既有契约；以下示例统一采用查询参数 `page` / `page_size` 与 JSON 字段 `page` / `pageSize`）
 
 ```text
 GET /api/v1/users?page=1&page_size=20
@@ -217,15 +220,15 @@ GET /api/v1/users?page=1&page_size=20
 | 参数 | 默认值 | 上限 |
 |---|---|---|
 | `page` | 1 | — |
-| `page_size` | 20 | 100 |
+| `page_size` | 20 | 100（可按接口契约调整） |
 | `sort` | `-createdAt`（倒序） | — |
 | `cursor` | — | — |
 
 ```go
-// 正例：标准分页参数
+// 正例：标准分页参数（查询参数用 page / page_size，响应体 JSON 用 page / pageSize）
 type Pagination struct {
-    Page     int `json:"page"`     // 从 1 开始
-    PageSize int `json:"pageSize"` // 默认 20，上限 100
+    Page     int `json:"page" form:"page"`          // 从 1 开始
+    PageSize int `json:"pageSize" form:"page_size"` // 默认 20，上限 100（按契约配置）
 }
 
 // 偏移分页（传统）
@@ -247,7 +250,7 @@ type CursorPagination struct {
 
 ### 3.1 统一错误响应结构
 
-🔴 必加约束
+🔴 必加约束（若项目已采用 RFC 9457 Problem Details 或既有错误信封，沿用项目契约；新接口可采用下述结构）
 
 ```json
 {
@@ -294,7 +297,7 @@ func writeError(w http.ResponseWriter, statusCode int, apiErr APIError) {
 | `403 Forbidden` | 已认证但无权限 | `http.StatusForbidden` |
 | `404 Not Found` | 资源不存在 | `http.StatusNotFound` |
 | `409 Conflict` | 资源冲突（如重复创建） | `http.StatusConflict` |
-| `413 Payload Too Large` | 请求体过大 | `http.StatusRequestEntityTooLarge` |
+| `413 Content Too Large` | 请求体过大（RFC 9110） | `http.StatusRequestEntityTooLarge` |
 | `422 Unprocessable Entity` | 参数语义错误（格式对但业务不合法） | `http.StatusUnprocessableEntity` |
 | `429 Too Many Requests` | 频率限制 | `http.StatusTooManyRequests` |
 | `500 Internal Server Error` | 服务端未知错误 | `http.StatusInternalServerError` |
@@ -474,7 +477,8 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
         return
     }
     if err := requestValidator.Struct(req); err != nil { // 复用项目已注入的校验器
-        writeError(w, http.StatusBadRequest, APIError{Code: "VALIDATION_ERROR", Message: err.Error()})
+        // 将校验错误映射为脱敏后的字段级 details 或安全提示，不直接透传内部 err.Error()
+        writeError(w, http.StatusBadRequest, APIError{Code: "VALIDATION_ERROR", Message: formatValidationMessage(err)})
         return
     }
     order, err := svc.CreateOrder(r.Context(), req) // 业务校验在 service 内部
@@ -576,7 +580,8 @@ func (s *UserService) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.
         return nil, status.Error(codes.NotFound, "用户不存在")
     }
     if err != nil {
-        return nil, status.Errorf(codes.Internal, "获取用户失败: %v", err)
+        slog.ErrorContext(ctx, "get user failed", slog.Any("error", err), slog.String("user_id", req.UserId))
+        return nil, status.Error(codes.Internal, "服务器内部错误")
     }
     return toProto(user), nil
 }
@@ -614,19 +619,19 @@ service LogService {
 }
 ```
 
-**使用原则**：
+**使用原则**（根据单条消息体积、内存预算、首字节延迟与背压需求决定，不以固定记录条数为硬门槛）：
 
-- **大量数据返回**（> 1000 条记录）→ 服务端流（避免一次性加载到内存）
-- **批量上传**（> 100 条记录）→ 客户端流
-- **实时通信**（聊天、监控推送）→ 双向流
+- **大结果集或持续推送**（单次响应内存或消息体积受限时）→ 服务端流
+- **大批量/大文件分块上传**（需要流式接收与背压控制时）→ 客户端流
+- **实时双向交互**（聊天、订阅同步、监控推送）→ 双向流
 
 ### 6.4 gRPC 超时
 
 🔴 必加约束
 
 ```go
-// 客户端必须设置 deadline
-ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 客户端基于上游 ctx 派生 deadline，超时值来自项目配置
+ctx, cancel := context.WithTimeout(ctx, cfg.RPCTimeout)
 defer cancel()
 resp, err := client.GetUser(ctx, &pb.GetUserRequest{UserId: "123"})
 
@@ -704,5 +709,6 @@ service UserService {
 .PHONY: api-docs
 api-docs:
 	swag init -g cmd/server/main.go -o api/docs
-	protoc --go_out=. --go-grpc_out=. api/**/*.proto
+	find api -name '*.proto' -exec protoc --go_out=. --go-grpc_out=. {} +
+	# 若项目已采用 buf，则使用：buf generate
 ```

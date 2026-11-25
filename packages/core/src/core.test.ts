@@ -22,7 +22,7 @@ import {
 import { testAdapter } from "./test-adapter.js";
 
 async function withTempProject(run: (root: string) => Promise<void>): Promise<void> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agent-rule-kit-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-"));
   try {
     await run(root);
   } finally {
@@ -120,7 +120,7 @@ test("initializeProject creates a valid generic adapter scaffold", async () => {
     await writeFile(path.join(target, "go.mod"), "module example.com/demo\n");
     const config = await initializeProject(target, testAdapter, source);
     assert.deepEqual(config.rulepacks, ["common", "go", "project-docs/go"]);
-    assert.match(await readFile(path.join(target, testAdapter.entryFile), "utf8"), /AgentRuleKit/);
+    assert.match(await readFile(path.join(target, testAdapter.entryFile), "utf8"), /ZhiShu/);
     assert.match(
       await readFile(path.join(target, ".agent-rules", "go", "entry.md"), "utf8"),
       /# go/,
@@ -273,7 +273,7 @@ test("卸载拒绝受管文件漂移、伪造锁文件、符号链接及过期�
 
     const entryPath = path.join(target, testAdapter.entryFile);
     const originalEntry = await readFile(entryPath, "utf8");
-    await writeFile(entryPath, originalEntry.replace("AgentRuleKit", "用户改写"));
+    await writeFile(entryPath, originalEntry.replace("ZhiShu", "用户改写"));
     assert.ok((await planUninstall(target, testAdapter)).conflicts.some((issue) => issue.code === "managed-block-drift"));
     await assert.rejects(applyUninstall(target, testAdapter), /managed-block-drift/);
     await writeFile(entryPath, originalEntry);
@@ -318,7 +318,7 @@ test("卸载遇到操作锁或中断事务时拒绝继续，并能恢复中断�
     ]);
     assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
     assert.equal(results.filter((result) => result.status === "rejected").length, 1);
-    assert.equal(await readFile(path.join(target, ".agent-rules", "overrides.md"), "utf8"), "# 项目覆盖规则\n\n在此添加项目特有规则。AgentRuleKit 更新时会保留本文件。\n");
+    assert.equal(await readFile(path.join(target, ".agent-rules", "overrides.md"), "utf8"), "# 项目覆盖规则\n\n在此添加项目特有规则。智枢更新时会保留本文件。\n");
   });
 });
 
@@ -795,7 +795,7 @@ test("校验能发现目标入口受控区块漂移", async () => {
     await initializeProject(target, testAdapter, source);
     const entryPath = path.join(target, testAdapter.entryFile);
     const entry = await readFile(entryPath, "utf8");
-    await writeFile(entryPath, entry.replace("AgentRuleKit", "手工改写后"));
+    await writeFile(entryPath, entry.replace("ZhiShu", "手工改写后"));
     assert.ok((await validateProject(target, testAdapter)).issues.some((issue) => issue.code === "managed-block-drift"));
     await assert.rejects(applyProject(target, await loadProjectConfig(target), testAdapter), /managed-block-drift/);
   });

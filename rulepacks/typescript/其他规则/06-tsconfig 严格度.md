@@ -31,12 +31,16 @@ function add(a, b) { return a + b; }                  // ❌ 参数隐式 any
 ### 1.3 宽松 null 检查
 
 ```ts
-function getName(user: User) {
-  return user.name.toUpperCase();                     // ❌ user 可能 undefined
+function getName(user: User): string {
+  return user.name.toUpperCase();
 }
 
-function getName(user: User | null) {
-  return user.name.toUpperCase();                     // ❌ strictNullChecks 报错
+// ❌ strictNullChecks: false 时下面调用不会报错，运行时直接抛 TypeError
+getName(undefined);
+
+// ✅ strictNullChecks: true 时强制在签名与实现中显式处理 null / undefined
+function getNameSafe(user: User | null | undefined): string {
+  return user ? user.name.toUpperCase() : 'UNKNOWN';
 }
 ```
 
@@ -56,11 +60,14 @@ console.log(x.toFixed(2));                           // ❌ 运行时崩
 
 ```ts
 interface User { name?: string }
-const u: User = { name: 'alice' };
-const n: string = u.name;                            // ❌ name 可能 undefined
 
-// exactOptionalPropertyTypes: true 后
-const u: User = { name: undefined };                 // ❌ 不允许显式传 undefined
+function readName(u: User): string {
+  return u.name;                                     // ❌ strictNullChecks 下报错：string | undefined 不能赋给 string
+}
+
+// 启用 exactOptionalPropertyTypes: true 后，严格区分“省略属性”与“显式传 undefined”
+const u1: User = {};                                 // ✅ 允许省略
+const u2: User = { name: undefined };                // ❌ 不允许显式传 undefined（除非声明为 name?: string | undefined）
 ```
 
 ## 2. 🟡 推荐 · 团队约定
@@ -94,7 +101,9 @@ const u: User = { name: undefined };                 // ❌ 不允许显式传 u
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,                         // 每个文件可独立编译
-    "verbatimModuleSyntax": true,                    // 强制显式 type import
+    "verbatimModuleSyntax": true,                    // 强制显式 type import（TS 5.0+）
+    // Node 22+ 原生类型剥离项目可按需评估 TS 5.8+ 的 "erasableSyntaxOnly": true
+    // 直接写 .ts 扩展名导入时按需评估 "allowImportingTsExtensions": true（需配合 noEmit 或 TS 5.7+ rewriteRelativeImportExtensions）
 
     // ===== 库与兼容性 =====
     "lib": ["ES2022", "DOM", "DOM.Iterable"],     // 仅浏览器项目示例
@@ -112,19 +121,22 @@ const u: User = { name: undefined };                 // ❌ 不允许显式传 u
 
 ### 2.2 模块解析（按构建工具选）
 
-| 构建工具 | `module` | `moduleResolution` |
-|---------|----------|--------------------|
-| **Vite / Webpack 5 / esbuild** | `"ESNext"` | `"Bundler"` |
-| **Node.js（最新 LTS）** | `"NodeNext"` | `"NodeNext"` |
-| **tsc 直接构建** | `"ES2022"` | `"Node"` / `"Node16"` |
+| 构建与运行目标 | `module` | `moduleResolution` |
+|---------------|----------|--------------------|
+| **Vite / Webpack 5 / esbuild / Electron 渲染进程** | `"ESNext"` | `"Bundler"` |
+| **Node.js / CLI / 核心库（`tsc` 直接构建）** | `"NodeNext"` | `"NodeNext"` |
+| **兼容旧版 Node 16 语义的存量库** | `"Node16"` | `"Node16"` |
+
+> 多目标 monorepo（如同时包含 Node/CLI/核心包与 Vite/Electron 渲染进程）应按子包运行目标分别配置 `tsconfig`：Node/CLI/核心包使用 `"NodeNext"`，前端/渲染进程打包目标使用 `"Bundler"`；不要在新项目中继续使用已过时的 `"moduleResolution": "Node"`（即 `Node10`，不支持 `package.json` `exports`）。
 
 ### 2.3 目标版本
 
 | 运行环境 | `target` |
 |---------|---------|
+| Node.js 22 LTS | `ES2022` 或 `ES2023`（按项目最低 Node 版本与 `lib` 配套） |
 | 现代浏览器（Chrome 94+ / Safari 16+ / Firefox 93+） | `ES2022` |
 | 兼容老浏览器（Chrome 70+） | `ES2020` |
-| 最新实验 | `ESNext` |
+| 最新实验 / 由下游 bundler 降级 | `ESNext` |
 
 ### 2.4 严格模式下的常见问题
 
@@ -156,11 +168,11 @@ const u2: User = { name: 'alice' };
 **库类型缺失**：
 
 ```ts
-// ❌ 库没类型
+// ❌ 直接引入无类型声明的库且不做声明补充
 import oldLib from 'no-types-lib';
-
-// ✅ 写 .d.ts(见 [05-声明文件](./05-声明文件.md))
 ```
+
+✅ 优先确认是否存在官方或 `@types/*` 声明；否则编写最小 `.d.ts`，详见 [05-声明文件](./05-声明文件.md)。
 
 ### 2.5 增量编译
 
@@ -201,15 +213,16 @@ tsc --build                        # 增量构建项目引用
 ```jsonc
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@components/*": ["src/components/*"],
-      "@utils/*": ["src/utils/*"]
+      "@/*": ["./src/*"],
+      "@components/*": ["./src/components/*"],
+      "@utils/*": ["./src/utils/*"]
     }
   }
 }
 ```
+
+TS 4.1+ 起 `paths` 直接基于 `tsconfig.json` 所在目录解析相对路径，无需再配置已不推荐的 `baseUrl`。
 
 ⚠️ `paths` 仅 TS 解析；运行时 / 构建工具也需要配（Vite 的 `resolve.alias` / Webpack 的 `resolve.alias`）。
 
@@ -230,7 +243,7 @@ tsc --build                        # 增量构建项目引用
 
 ### 3.2 composite / references（大型 monorepo）
 
-见 §6。
+见 §2.6 项目引用（Project References）。
 
 ### 3.3 多个 tsconfig.json（不同环境）
 
@@ -240,5 +253,3 @@ tsconfig.build.json        # 生产构建（生成 d.ts）
 tsconfig.test.json         # 测试环境
 tsconfig.node.json         # Node 环境
 ```
-
----

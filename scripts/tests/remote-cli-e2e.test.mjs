@@ -12,12 +12,12 @@ import { c } from "tar";
 const repository = fileURLToPath(new URL("../../", import.meta.url));
 const cli = path.join(repository, "packages", "cli", "dist", "index.js");
 const mockFetch = new URL("./fixtures/mock-cli-release-fetch.mjs", import.meta.url).href;
-const assetName = "agentrulekit-rulepacks.tar.gz";
+const assetName = "zhishu-rulepacks.tar.gz";
 
 function command(statePath, ...args) {
   return spawnSync(process.execPath, ["--import", mockFetch, cli, ...args], {
     encoding: "utf8",
-    env: { ...process.env, AGENTRULEKIT_TEST_RELEASE_STATE: statePath },
+    env: { ...process.env, ZHISHU_TEST_RELEASE_STATE: statePath },
   });
 }
 
@@ -34,15 +34,15 @@ async function bundle(root, version, sourceCommit, rule, license) {
     entry: "entry.md", dependencies: [], rules: ["entry.md"],
   }));
   await writeFile(path.join(pack, "entry.md"), rule);
-  await writeFile(path.join(directory, "agentrulekit-release.json"), JSON.stringify({
+  await writeFile(path.join(directory, "zhishu-release.json"), JSON.stringify({
     schemaVersion: 1, version, sourceCommit,
   }));
   if (license !== undefined) await writeFile(path.join(directory, "LICENSE"), license);
   const assetPath = path.join(directory, assetName);
-  await c({ gzip: true, file: assetPath, cwd: directory }, ["agentrulekit-release.json", ...(license !== undefined ? ["LICENSE"] : []), "rulepacks"]);
+  await c({ gzip: true, file: assetPath, cwd: directory }, ["zhishu-release.json", ...(license !== undefined ? ["LICENSE"] : []), "rulepacks"]);
   const bytes = await readFile(assetPath);
   const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  const assetUrl = `https://github.com/yadan177/AgentRuleKit/releases/download/v${version}/${assetName}`;
+  const assetUrl = `https://github.com/yadan177/ZhiShu/releases/download/v${version}/${assetName}`;
   return {
     assetPath,
     release: {
@@ -53,7 +53,7 @@ async function bundle(root, version, sourceCommit, rule, license) {
 }
 
 test("CLI 模拟 GitHub Release 完成远程安装、检查、预览与显式更新", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agentrulekit-remote-cli-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-remote-cli-"));
   try {
     const project = path.join(root, "project");
     const statePath = path.join(root, "release-state.json");
@@ -88,7 +88,7 @@ test("CLI 模拟 GitHub Release 完成远程安装、检查、预览与显式更
     const preview = command(statePath, "diff", project);
     expectExit(preview, 0, "远程差异预览");
     assert.match(preview.stdout, /\+# 新规则/);
-    const licenseDiff = preview.stdout.split("diff --agent-rule .agent-rules/LICENSE")[1]?.split("diff --agent-rule")[0];
+    const licenseDiff = preview.stdout.split("diff --zhishu .agent-rules/LICENSE")[1]?.split("diff --zhishu")[0];
     assert.ok(licenseDiff, "差异预览未列出许可文件");
     assert.match(licenseDiff, /\+Apache License/);
     assert.equal(await readFile(installedRule, "utf8"), "# 旧规则\n");

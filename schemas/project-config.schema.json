@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentrulekit.dev/schemas/project-config.schema.json",
-  "title": "AgentRuleKit project configuration",
+  "$id": "https://zhishu.dev/schemas/project-config.schema.json",
+  "title": "ZhiShu project configuration",
   "type": "object",
   "required": ["schemaVersion", "source", "rulepacks", "targets", "project", "updates"],
   "properties": {

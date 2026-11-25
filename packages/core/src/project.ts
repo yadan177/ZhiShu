@@ -22,6 +22,7 @@ import type { TargetAdapter } from "./adapter.js";
 import { detectProject } from "./detect.js";
 import { assertReleaseNotOlder } from "./release.js";
 import type {
+  DetectionResult,
   ProjectConfig,
   ProjectChange,
   ProjectLock,
@@ -33,7 +34,7 @@ import type {
   ValidationResult,
 } from "./types.js";
 
-const TOOLKIT_VERSION = "0.1.5";
+const TOOLKIT_VERSION = "2.0.0";
 const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9/-]*$/;
 const PACK_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
@@ -57,13 +58,7 @@ function assertKnownFields(value: Record<string, unknown>, allowed: readonly str
   if (unknown.length) throw new Error(`${section} 包含当前版本不支持的字段：${unknown.join(", ")}`);
 }
 
-export function parseProjectLock(content: string): ProjectLock {
-  let value: unknown;
-  try {
-    value = JSON.parse(content);
-  } catch {
-    throw new Error("锁文件不是合法 JSON");
-  }
+function assertProjectLock(value: unknown): asserts value is ProjectLock {
   if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.toolkitVersion !== "string" || !VERSION_PATTERN.test(value.toolkitVersion) ||
     !["workspace", "github"].includes(String(value.sourceType)) || typeof value.source !== "string" || !value.source ||
     !isStringMap(value.rulepacks) || !isStringMap(value.targets) || !isStringMap(value.managedFiles) ||
@@ -83,7 +78,17 @@ export function parseProjectLock(content: string): ProjectLock {
     (value.entryOrigin !== undefined && !["existing", "generated"].includes(String(value.entryOrigin)))) {
     throw new Error("锁文件包含未知字段、非法版本或无效摘要");
   }
-  return value as unknown as ProjectLock;
+}
+
+export function parseProjectLock(content: string): ProjectLock {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    throw new Error("锁文件不是合法 JSON");
+  }
+  assertProjectLock(value);
+  return value;
 }
 
 export async function loadProjectLock(root: string): Promise<ProjectLock> {
@@ -170,6 +175,24 @@ function documentationPack(stack: StackId): string | undefined {
   }
 }
 
+function assertReadyRulePackManifest(parsed: unknown, id: string): asserts parsed is RulePackManifest {
+  if (!isRecord(parsed)) throw new Error(`规则包 ${id} 的 manifest 必须是对象`);
+  assertKnownFields(parsed, ["$schema", "id", "version", "status", "kind", "entry", "dependencies", "rules"], `规则包 ${id}`);
+  if (parsed.id !== id) throw new Error(`规则包 ${id} 的 manifest ID 不匹配：${String(parsed.id)}`);
+  if ((parsed.$schema !== undefined && typeof parsed.$schema !== "string") ||
+    typeof parsed.version !== "string" || !PACK_VERSION_PATTERN.test(parsed.version) ||
+    !["common", "development", "documentation"].includes(String(parsed.kind)) ||
+    !Array.isArray(parsed.dependencies) || parsed.dependencies.some((dependency) => !isPackId(dependency)) ||
+    new Set(parsed.dependencies).size !== parsed.dependencies.length ||
+    !Array.isArray(parsed.rules) || parsed.rules.length === 0 || parsed.rules.some((rule) => !isPackRulePath(rule)) ||
+    new Set(parsed.rules).size !== parsed.rules.length || !isPackRulePath(parsed.entry) || !parsed.rules.includes(parsed.entry)) {
+    throw new Error(`规则包 ${id} 的 manifest 字段、入口或文件路径不合法`);
+  }
+  if (parsed.status !== "ready") {
+    throw new Error(`规则包 ${id} 尚未准备完成`);
+  }
+}
+
 async function loadRulePack(
   sourceRoot: string,
   id: string,
@@ -188,22 +211,8 @@ async function loadRulePack(
   } catch {
     throw new Error(`规则包 ${id} 的 manifest 缺失或不是合法 JSON`);
   }
-  if (!isRecord(parsed)) throw new Error(`规则包 ${id} 的 manifest 必须是对象`);
-  assertKnownFields(parsed, ["$schema", "id", "version", "status", "kind", "entry", "dependencies", "rules"], `规则包 ${id}`);
-  if (parsed.id !== id) throw new Error(`规则包 ${id} 的 manifest ID 不匹配：${String(parsed.id)}`);
-  if ((parsed.$schema !== undefined && typeof parsed.$schema !== "string") ||
-    typeof parsed.version !== "string" || !PACK_VERSION_PATTERN.test(parsed.version) ||
-    !["common", "development", "documentation"].includes(String(parsed.kind)) ||
-    !Array.isArray(parsed.dependencies) || parsed.dependencies.some((dependency) => !isPackId(dependency)) ||
-    new Set(parsed.dependencies).size !== parsed.dependencies.length ||
-    !Array.isArray(parsed.rules) || parsed.rules.length === 0 || parsed.rules.some((rule) => !isPackRulePath(rule)) ||
-    new Set(parsed.rules).size !== parsed.rules.length || !isPackRulePath(parsed.entry) || !parsed.rules.includes(parsed.entry)) {
-    throw new Error(`规则包 ${id} 的 manifest 字段、入口或文件路径不合法`);
-  }
-  if (parsed.status !== "ready") {
-    throw new Error(`规则包 ${id} 尚未准备完成`);
-  }
-  const manifest = parsed as unknown as RulePackManifest;
+  assertReadyRulePackManifest(parsed, id);
+  const manifest = parsed;
   for (const rule of manifest.rules) {
     if (await hasSymlinkAncestor(sourceRoot, path.posix.join("rulepacks", id, rule))) {
       throw new Error(`规则包 ${id} 的规则路径包含符号链接：${rule}`);
@@ -245,13 +254,7 @@ function resolveSourceRoot(root: string, config: ProjectConfig): string {
   return path.resolve(root, config.source.path);
 }
 
-export async function createDefaultConfig(
-  root: string,
-  adapter: TargetAdapter,
-  sourceRoot: string = root,
-): Promise<ProjectConfig> {
-  assertTargetAdapter(adapter);
-  const detection = await detectProject(root);
+export function recommendRulepacksForDetection(detection: DetectionResult): string[] {
   const rulepacks = [
     "common",
     ...detection.stacks.flatMap((stack) => {
@@ -259,6 +262,48 @@ export async function createDefaultConfig(
       return documentation ? [stack.id, documentation] : [stack.id];
     }),
   ];
+  return [...new Set(rulepacks)];
+}
+
+export async function listAvailableRulePacks(sourceRoot: string): Promise<RulePackManifest[]> {
+  const resolvedSource = path.resolve(sourceRoot);
+  const rulepacksRoot = path.join(resolvedSource, "rulepacks");
+  const rootInfo = await lstat(rulepacksRoot);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw new Error("规则源缺少有效的 rulepacks 目录");
+  }
+  const manifests: RulePackManifest[] = [];
+  const visit = async (relative: string, depth: number): Promise<void> => {
+    if (depth > 3) return;
+    const directory = relative ? path.join(rulepacksRoot, relative) : rulepacksRoot;
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const nextRelative = relative ? path.posix.join(relative, entry.name) : entry.name;
+      const fullPath = path.join(rulepacksRoot, nextRelative);
+      const info = await lstat(fullPath);
+      if (info.isSymbolicLink()) continue;
+      if (info.isDirectory()) {
+        if (await exists(path.join(fullPath, "pack.json"))) {
+          const loaded = await loadRulePack(resolvedSource, nextRelative);
+          manifests.push(loaded.manifest);
+        } else {
+          await visit(nextRelative, depth + 1);
+        }
+      }
+    }
+  };
+  await visit("", 0);
+  return manifests.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export async function createDefaultConfig(
+  root: string,
+  adapter: TargetAdapter,
+  sourceRoot: string = root,
+): Promise<ProjectConfig> {
+  assertTargetAdapter(adapter);
+  const detection = await detectProject(root);
+  const rulepacks = recommendRulepacksForDetection(detection);
   const relativeSource = path.relative(path.resolve(root), path.resolve(sourceRoot)) || ".";
 
   return {
@@ -267,7 +312,7 @@ export async function createDefaultConfig(
       type: "workspace",
       path: toPortablePath(relativeSource),
     },
-    rulepacks: [...new Set(rulepacks)],
+    rulepacks,
     targets: [adapter.id],
     project: {
       overrides: ".agent-rules/overrides.md",
@@ -283,13 +328,13 @@ export async function loadProjectConfig(root: string): Promise<ProjectConfig> {
   const configPath = path.join(root, "agent-rules.yaml");
   const config: unknown = parse(await readFile(configPath, "utf8"));
   if (!isRecord(config) || config.schemaVersion !== 1) {
-    throw new Error(`不支持的 AgentRuleKit schema 版本：${isRecord(config) ? String(config.schemaVersion) : "缺失"}`);
+    throw new Error(`不支持的 智枢 schema 版本：${isRecord(config) ? String(config.schemaVersion) : "缺失"}`);
   }
-  assertSupportedConfig(config as unknown as ProjectConfig);
-  return config as unknown as ProjectConfig;
+  assertSupportedConfig(config);
+  return config;
 }
 
-function assertSupportedConfig(config: ProjectConfig, adapter?: TargetAdapter): void {
+function assertSupportedConfig(config: unknown, adapter?: TargetAdapter): asserts config is ProjectConfig {
   if (!isRecord(config)) throw new Error("项目配置必须是对象");
   assertKnownFields(config, ["$schema", "schemaVersion", "source", "rulepacks", "targets", "project", "updates"], "项目配置");
   if (config.schemaVersion !== 1 || (config.$schema !== undefined && typeof config.$schema !== "string")) {
@@ -305,7 +350,7 @@ function assertSupportedConfig(config: ProjectConfig, adapter?: TargetAdapter): 
     new Set(config.targets).size !== config.targets.length) {
     throw new Error("项目配置的目标工具列表无效");
   }
-  if (adapter && config.targets.some((target) => !(adapter.compatibleTargets ?? [adapter.id]).includes(target))) {
+  if (adapter && config.targets.some((target) => typeof target !== "string" || !(adapter.compatibleTargets ?? [adapter.id]).includes(target))) {
     throw new Error(`项目配置包含 ${adapter.id} 入口不支持的目标工具`);
   }
   if (!Array.isArray(config.rulepacks) || config.rulepacks.length === 0 || config.rulepacks.some((id) => typeof id !== "string" || !PACK_ID_PATTERN.test(id) || id.includes("//") || id.endsWith("/")) ||
@@ -369,20 +414,20 @@ async function inspectLockedManagedFiles(root: string, lock: ProjectLock): Promi
       issues.push({ code: "symlink-path", message: `已安装规则清单包含符号链接：${manifestPath}` });
       continue;
     }
-    let manifest: RulePackManifest;
+    let rawManifest: unknown;
     try {
-      manifest = JSON.parse(await readFile(path.join(root, manifestPath), "utf8")) as RulePackManifest;
+      rawManifest = JSON.parse(await readFile(path.join(root, manifestPath), "utf8"));
     } catch {
       issues.push({ code: "invalid-installed-pack", message: `已安装规则清单缺失或无法解析：${manifestPath}` });
       continue;
     }
-    if (manifest.id !== id || manifest.version !== version || !Array.isArray(manifest.rules) || typeof manifest.entry !== "string" || !manifest.rules.includes(manifest.entry) ||
-      !Array.isArray(manifest.dependencies) || manifest.dependencies.some((dependency) => !isPackId(dependency)) ||
-      new Set(manifest.dependencies).size !== manifest.dependencies.length) {
+    if (!isRecord(rawManifest) || rawManifest.id !== id || rawManifest.version !== version || !Array.isArray(rawManifest.rules) || typeof rawManifest.entry !== "string" || !rawManifest.rules.includes(rawManifest.entry) ||
+      !Array.isArray(rawManifest.dependencies) || rawManifest.dependencies.some((dependency) => !isPackId(dependency)) ||
+      new Set(rawManifest.dependencies).size !== rawManifest.dependencies.length) {
       issues.push({ code: "invalid-installed-pack", message: `已安装规则清单与锁文件不一致：${manifestPath}` });
       continue;
     }
-    for (const rule of manifest.rules) {
+    for (const rule of rawManifest.rules) {
       if (!isPackRulePath(rule)) {
         issues.push({ code: "invalid-installed-pack", message: `已安装规则清单包含不安全路径：${id}/${String(rule)}` });
         continue;
@@ -415,18 +460,19 @@ async function inspectInstalledPackClosure(root: string, requested: string[], lo
     }
     visiting.add(id);
     const manifestPath = path.join(root, ".agent-rules", id, "pack.json");
-    let manifest: RulePackManifest;
+    let dependencies: string[];
     try {
-      manifest = JSON.parse(await readFile(manifestPath, "utf8")) as RulePackManifest;
-      if (!Array.isArray(manifest.dependencies) || manifest.dependencies.some((dependency) => !isPackId(dependency))) {
+      const rawManifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+      if (!isRecord(rawManifest) || !Array.isArray(rawManifest.dependencies) || !rawManifest.dependencies.every((dependency): dependency is string => isPackId(dependency))) {
         throw new Error("依赖字段不合法");
       }
+      dependencies = rawManifest.dependencies;
     } catch {
       issues.push({ code: "invalid-installed-pack", message: `已安装规则清单在校验期间发生变化或无法解析：${manifestPath}` });
       visiting.delete(id);
       return;
     }
-    for (const dependency of manifest.dependencies) await visit(dependency);
+    for (const dependency of dependencies) await visit(dependency);
     visiting.delete(id);
     visited.add(id);
   };
@@ -455,7 +501,7 @@ async function prepareProject(root: string, config: ProjectConfig, adapter: Targ
     throw new Error(`检测到规则写入操作锁 ${OPERATION_LOCK}；请等待当前操作结束，或确认进程已停止后人工检查`);
   }
   if ((await listInterruptedTransactions(resolvedRoot)).length) {
-    throw new Error("检测到未完成的规则更新事务；请先运行 agent-rule recover <project-directory> 查看并恢复");
+    throw new Error("检测到未完成的规则更新事务；请先运行 zhishu recover <project-directory> 查看并恢复");
   }
   if (config.source.type === "github" && (!snapshot || !path.isAbsolute(snapshot.root) || !/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(snapshot.version) || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(snapshot.commit) || !/^sha256:[a-f0-9]{64}$/.test(snapshot.digest))) {
     throw new Error("GitHub 规则源缺少经过校验的版本、摘要或来源提交");
@@ -615,7 +661,7 @@ async function applyProjectUnlocked(root: string, config: ProjectConfig, adapter
     const overrides = resolveInside(staging, config.project.overrides.slice(".agent-rules/".length));
     await mkdir(path.dirname(overrides), { recursive: true });
     if (!(await exists(overrides))) {
-      await writeFile(overrides, "# 项目覆盖规则\n\n在此添加项目特有规则。AgentRuleKit 更新时会保留本文件。\n", "utf8");
+      await writeFile(overrides, "# 项目覆盖规则\n\n在此添加项目特有规则。智枢更新时会保留本文件。\n", "utf8");
     }
     for (const [relativePath, content] of prepared.files) {
       const target = resolveInside(staging, relativePath.slice(".agent-rules/".length));
@@ -722,7 +768,7 @@ async function planUninstallInternal(root: string, adapter: TargetAdapter, ownsW
   const entryPath = path.join(resolvedRoot, adapter.entryFile);
   const entryContent = await readFile(entryPath, "utf8");
   const block = extractManagedBlock(entryContent, adapter);
-  if (!block) throw new Error(`${adapter.entryFile} 中没有完整的 AgentRuleKit 受控区块`);
+  if (!block) throw new Error(`${adapter.entryFile} 中没有完整的 智枢受控区块`);
   const start = entryContent.indexOf(block);
   const prefix = entryContent.slice(0, start);
   const suffix = entryContent.slice(start + block.length);
@@ -841,7 +887,8 @@ async function recoverInterruptedProjectUnlocked(root: string, adapter: TargetAd
   const pending = await listInterruptedTransactions(resolvedRoot);
   if (!pending.length) return undefined;
   if (pending.length > 1) throw new Error("发现多个未完成事务；请人工检查，不自动选择恢复对象");
-  const transaction = pending[0]!;
+  const [transaction] = pending;
+  if (!transaction) return undefined;
   const parsedJournal: unknown = JSON.parse(await readFile(path.join(transaction, "journal.json"), "utf8"));
   if (!isRecord(parsedJournal) || parsedJournal.schemaVersion !== 1 || typeof parsedJournal.hadRules !== "boolean" || !isRecord(parsedJournal.snapshots)) {
     throw new Error("恢复记录格式不合法");
@@ -912,6 +959,8 @@ export async function initializeProject(
   adapter: TargetAdapter,
   sourceRoot: string = root,
   selectedTargets?: string[],
+  selectedRulepacks?: string[],
+  expectedPlan?: ProjectPlan,
 ): Promise<ProjectConfig> {
   const resolvedRoot = path.resolve(root);
   return withProjectWriteLock(resolvedRoot, async () => {
@@ -919,8 +968,9 @@ export async function initializeProject(
       throw new Error("agent-rules.yaml 已存在；请运行 generate，不要再次运行 init");
     }
     const config = await createDefaultConfig(resolvedRoot, adapter, sourceRoot);
+    if (selectedRulepacks) config.rulepacks = selectedRulepacks;
     if (selectedTargets) config.targets = selectedTargets;
-    await applyProjectUnlocked(resolvedRoot, config, adapter, stringify(config));
+    await applyProjectUnlocked(resolvedRoot, config, adapter, stringify(config), undefined, expectedPlan);
     return config;
   });
 }
@@ -957,7 +1007,7 @@ async function validateProjectInternal(root: string, adapter: TargetAdapter, own
   }
   const interrupted = await listInterruptedTransactions(resolvedRoot);
   if (interrupted.length) {
-    issues.push({ code: "interrupted-transaction", message: `检测到 ${interrupted.length} 个未完成的规则更新事务；请先运行 agent-rule recover 查看并恢复` });
+    issues.push({ code: "interrupted-transaction", message: `检测到 ${interrupted.length} 个未完成的规则更新事务；请先运行 zhishu recover 查看并恢复` });
   }
   const requiredFiles = [
     "agent-rules.yaml",
@@ -1004,7 +1054,7 @@ async function validateProjectInternal(root: string, adapter: TargetAdapter, own
     if (!entry.includes(adapter.blockStart) || !entry.includes(adapter.blockEnd)) {
       issues.push({
         code: "missing-managed-block",
-        message: `${adapter.entryFile} 中没有完整的 AgentRuleKit 受控区块`,
+        message: `${adapter.entryFile} 中没有完整的 智枢受控区块`,
       });
     }
 

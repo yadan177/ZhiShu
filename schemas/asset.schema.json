@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentrulekit.dev/schemas/asset.schema.json",
-  "title": "AI 开发工具箱资产清单",
+  "$id": "https://zhishu.dev/schemas/asset.schema.json",
+  "title": "智枢资产清单",
   "type": "object",
   "required": ["schemaVersion", "id", "kind", "version", "title", "supportedIdes", "dependencies", "requiredTools", "ruleCategories"],
   "properties": {

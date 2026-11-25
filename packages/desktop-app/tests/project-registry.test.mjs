@@ -8,7 +8,7 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const { ProjectRegistry } = require("../build/project-registry.cjs");
 
-test("工具箱项目列表跨实例保留且不修改项目内容", async () => {
+test("智枢项目列表跨实例保留且不修改项目内容", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "toolbox-projects-"));
   try {
     const one = path.join(directory, "one");

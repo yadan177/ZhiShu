@@ -1,0 +1,24 @@
+{
+  "name": "zhishu-3d-art",
+  "displayName": "三维设计师",
+  "version": "2.0.0",
+  "description": "面向 XR 与实时 3D 项目的图生 3D 准备、AI 粗模修复重拓扑、模型与贴图体检、FBX/glTF 导出校验、入库清单生成与 Blender 批处理脚本技能套件。",
+  "author": {
+    "name": "智枢官方"
+  },
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "三维设计师"
+  },
+  "ruleCategories": [
+    "common",
+    "3d-art",
+    "xr-common"
+  ],
+  "suggestedPrompts": [
+    "为这个道具整理适配图生 3D 的多视角参考图拍摄规范与提示词",
+    "按 XR 预算检查这份模型和 PBR 贴图的面数、LOD、UV 与通道打包",
+    "生成一个 Blender Python 批处理脚本完成轴向修正、清变换与 FBX 批量导出"
+  ]
+}

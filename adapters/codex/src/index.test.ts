@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mergeManagedBlock } from "@agentrulekit/core";
-import type { ProjectConfig } from "@agentrulekit/core";
+import { mergeManagedBlock } from "@zhishu/core";
+import type { ProjectConfig } from "@zhishu/core";
 
-import { CODEX_BLOCK_END, CODEX_BLOCK_START, codexAdapter } from "./index.js";
+import { AGENTS_MD_TARGETS, CODEX_BLOCK_END, CODEX_BLOCK_START, codexAdapter } from "./index.js";
 
 const config: ProjectConfig = {
   schemaVersion: 1,
@@ -41,4 +41,25 @@ test("Codex 适配器拒绝不完整的旧受控区块", () => {
   const block = codexAdapter.renderManagedBlock(config, {});
   assert.throws(() => mergeManagedBlock(`${CODEX_BLOCK_START}\n旧内容`, block, codexAdapter), /边界不完整/);
   assert.throws(() => mergeManagedBlock(`${block}\n${block}`, block, codexAdapter), /边界不完整/);
+});
+
+test("AGENTS_MD_TARGETS 包含 2.0 平台并为 XR / 产研岗位包生成任务路由", () => {
+  assert.ok(AGENTS_MD_TARGETS.includes("antigravity"));
+  assert.ok(AGENTS_MD_TARGETS.includes("trae"));
+  const xrConfig: ProjectConfig = {
+    ...config,
+    rulepacks: ["common", "xr-common", "product-pm", "3d-art", "ta-vfx-shader"],
+    targets: ["codex", "antigravity", "trae"],
+  };
+  const block = codexAdapter.renderManagedBlock(xrConfig, {
+    common: "entry.md",
+    "xr-common": "15-AI通用入口规则.md",
+    "product-pm": "15-AI通用入口规则.md",
+    "3d-art": "15-AI通用入口规则.md",
+    "ta-vfx-shader": "15-AI通用入口规则.md",
+  });
+  assert.match(block, /XR 空间计算项目通用基准/);
+  assert.match(block, /产品需求、结构图、流程图、泳道图或验收梳理/);
+  assert.match(block, /三维建模、图生 3D 修复、贴图规范或 FBX\/glTF 导出/);
+  assert.match(block, /特效制作、Shader 编写、渲染性能或资产导入校验/);
 });

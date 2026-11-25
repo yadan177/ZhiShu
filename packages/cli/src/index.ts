@@ -4,7 +4,7 @@ import process from "node:process";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 
-import { AGENTS_MD_TARGETS, codexAdapter } from "@agentrulekit/adapter-codex";
+import { AGENTS_MD_TARGETS, codexAdapter } from "@zhishu/adapter-codex";
 import {
   detectProject,
   createDefaultConfig,
@@ -23,17 +23,17 @@ import {
   assertReleaseNotOlder,
   listInterruptedTransactions,
   recoverInterruptedProject,
-} from "@agentrulekit/core";
-import type { DetectionResult, ProjectChange, ProjectPlan, UninstallPlan } from "@agentrulekit/core";
+} from "@zhishu/core";
+import type { DetectionResult, ProjectChange, ProjectPlan, UninstallPlan } from "@zhishu/core";
 
-const VERSION = "0.1.5";
-const DEFAULT_REPOSITORY = "yadan177/AgentRuleKit";
+const VERSION = "2.0.0";
+const DEFAULT_REPOSITORY = "yadan177/ZhiShu";
 
 function printHelp(): void {
-  console.log(`AgentRuleKit ${VERSION}
+  console.log(`智枢 (zhishu) ${VERSION}
 
 用法：
-  agent-rule <command> [project-directory]
+  zhishu <command> [project-directory]
 
 命令：
   detect      检测支持的技术栈并展示证据
@@ -48,12 +48,16 @@ function printHelp(): void {
   version     输出 CLI 版本
   help        显示帮助
 
-示例：agent-rule diff /path/to/project
-      agent-rule update /path/to/project --apply
-      agent-rule uninstall /path/to/project --details
-      agent-rule uninstall /path/to/project --apply
-      agent-rule init /path/to/project --targets codex,qoder,cursor,workbuddy
-      agent-rule init /path/to/project --source-workspace /path/to/AgentRuleKit`);
+示例：zhishu diff /path/to/project
+      zhishu update /path/to/project --apply
+      zhishu uninstall /path/to/project --details
+      zhishu uninstall /path/to/project --apply
+      zhishu init /path/to/project --targets codex,antigravity,trae,qoder,cursor,workbuddy
+      zhishu init /path/to/project --source-workspace /path/to/ZhiShu --rulepacks common,unity,xr-common,product-pm`);
+}
+
+function isAgentsMdTarget(value: string): value is (typeof AGENTS_MD_TARGETS)[number] {
+  return (AGENTS_MD_TARGETS as readonly string[]).includes(value);
 }
 
 function requestedTargets(): string[] {
@@ -62,10 +66,23 @@ function requestedTargets(): string[] {
   const value = process.argv[index + 1];
   const targets = value?.split(",") ?? [];
   if (!value || value.startsWith("--") || targets.length === 0 ||
-    new Set(targets).size !== targets.length || targets.some((target) => !AGENTS_MD_TARGETS.includes(target as typeof AGENTS_MD_TARGETS[number]))) {
+    new Set(targets).size !== targets.length || targets.some((target) => !isAgentsMdTarget(target))) {
     throw new Error(`--targets 只能填写不重复的平台：${AGENTS_MD_TARGETS.join(",")}`);
   }
   return targets;
+}
+
+function requestedRulepacks(): string[] | undefined {
+  const index = process.argv.indexOf("--rulepacks");
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  const packs = value?.split(",") ?? [];
+  if (!value || value.startsWith("--") || packs.length === 0 ||
+    new Set(packs).size !== packs.length ||
+    packs.some((id) => !/^[a-z0-9][a-z0-9/-]*$/.test(id) || id.includes("//") || id.endsWith("/"))) {
+    throw new Error("--rulepacks 只能填写以逗号分隔且不重复的有效规则包 ID，例如 common,unity,xr-common,product-pm");
+  }
+  return packs;
 }
 
 function renderChange(change: ProjectChange): string {
@@ -95,7 +112,7 @@ function renderChange(change: ProjectChange): string {
   if (suffix === 0 && newChanged.length && change.after && !change.after.endsWith("\n")) newLines.push("\\ No newline at end of file");
   const oldStart = oldChanged.length ? prefix + 1 : prefix;
   const newStart = newChanged.length ? prefix + 1 : prefix;
-  return [`diff --agent-rule ${change.path}`, `--- ${change.action === "add" ? "/dev/null" : change.path}`, `+++ ${change.action === "remove" ? "/dev/null" : change.path}`, `@@ -${oldStart},${oldChanged.length} +${newStart},${newChanged.length} @@`, ...oldLines, ...newLines].join("\n");
+  return [`diff --zhishu ${change.path}`, `--- ${change.action === "add" ? "/dev/null" : change.path}`, `+++ ${change.action === "remove" ? "/dev/null" : change.path}`, `@@ -${oldStart},${oldChanged.length} +${newStart},${newChanged.length} @@`, ...oldLines, ...newLines].join("\n");
 }
 
 function printPlan(plan: ProjectPlan): void {
@@ -113,7 +130,7 @@ function printUninstallSummary(plan: UninstallPlan, applied: boolean): void {
   if (entryChange) {
     console.log(entryChange.action === "remove"
       ? `${verb}删除工具生成的 ${codexAdapter.entryFile}。`
-      : `${verb}从 ${codexAdapter.entryFile} 移除 AgentRuleKit 入口，保留原有内容。`);
+      : `${verb}从 ${codexAdapter.entryFile} 移除 智枢入口，保留原有内容。`);
   }
   console.log(`${verb}删除 agent-rules.yaml 和 .agent-rules.lock.json。`);
   console.log(plan.retainedPaths.length
@@ -156,12 +173,13 @@ async function run(): Promise<void> {
       const sourceRoot = sourceArg >= 0 ? process.argv[sourceArg + 1] : undefined;
       if (sourceArg >= 0 && !sourceRoot) throw new Error("--source-workspace 需要规则源目录");
       const targets = requestedTargets();
+      const selectedRulepacks = requestedRulepacks();
       const detection = await detectProject(root);
       const recommendation = await createDefaultConfig(root, codexAdapter);
       printInitRecommendation(detection, recommendation.rulepacks);
       let config;
-      if (sourceArg >= 0) {
-        config = await initializeProject(root, codexAdapter, sourceRoot!, targets);
+      if (sourceArg >= 0 && sourceRoot !== undefined) {
+        config = await initializeProject(root, codexAdapter, sourceRoot, targets, selectedRulepacks);
       } else {
         const release = await findLatestRelease(DEFAULT_REPOSITORY);
         const downloaded = await downloadRulepacks(release);
@@ -171,12 +189,12 @@ async function run(): Promise<void> {
             version: downloaded.version,
             digest: release.digest,
             commit: downloaded.sourceCommit,
-          }, DEFAULT_REPOSITORY, undefined, undefined, targets);
+          }, DEFAULT_REPOSITORY, selectedRulepacks, undefined, targets);
         } finally {
           await downloaded.cleanup();
         }
       }
-      console.log(`已在 ${root} 初始化 AgentRuleKit`);
+      console.log(`已在 ${root} 初始化智枢`);
       console.log(`规则包：${config.rulepacks.join(", ")}`);
       console.log(`目标平台：${config.targets.join(", ")}`);
       return;
@@ -252,12 +270,12 @@ async function run(): Promise<void> {
       }
       if (!args.includes("--apply")) {
         printUninstallSummary(plan, false);
-        if (!args.includes("--details")) console.log("如需查看逐行差异，运行 agent-rule uninstall <project-directory> --details。");
-        console.log("确认后运行 agent-rule uninstall <project-directory> --apply 卸载项目规则。");
+        if (!args.includes("--details")) console.log("如需查看逐行差异，运行 zhishu uninstall <project-directory> --details。");
+        console.log("确认后运行 zhishu uninstall <project-directory> --apply 卸载项目规则。");
         return;
       }
       await applyUninstall(target, codexAdapter, plan);
-      console.log(`已在 ${target} 卸载 AgentRuleKit 项目规则。`);
+      console.log(`已在 ${target} 卸载 智枢项目规则。`);
       printUninstallSummary(plan, true);
       return;
     }
@@ -270,7 +288,7 @@ async function run(): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      console.log(`AgentRuleKit 项目验证通过：${root}`);
+      console.log(`智枢项目验证通过：${root}`);
       return;
     }
     case "check": {
@@ -321,6 +339,6 @@ async function run(): Promise<void> {
 
 run().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`agent-rule：${message}`);
+  console.error(`zhishu：${message}`);
   process.exitCode = 1;
 });

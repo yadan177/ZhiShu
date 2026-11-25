@@ -1,8 +1,8 @@
 {
-  "name": "agentrulekit-desktop",
-  "version": "1.2.2",
+  "name": "zhishu-desktop",
+  "version": "2.0.0",
   "private": true,
-  "description": "AI 开发工具箱桌面版",
+  "description": "智枢桌面版",
   "main": "build/main.cjs",
   "scripts": {
     "dev": "npm run build && electron .",
@@ -34,9 +34,9 @@
     "vite": "^6.4.3"
   },
   "build": {
-    "appId": "cn.agentrulekit.desktop",
-    "productName": "AI 开发工具箱",
-    "buildVersion": "1.2.2",
+    "appId": "cn.zhinao.zhishu",
+    "productName": "智枢",
+    "buildVersion": "2.0.0",
     "directories": {
       "output": "release"
     },
@@ -44,7 +44,19 @@
       "dist/**/*",
       "build/main.cjs",
       "build/preload.cjs",
+      "assets/icon.png",
+      "assets/icon-mac.png",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../plugins",
+        "to": "plugins",
+        "filter": [
+          "**/*",
+          "!README.md"
+        ]
+      }
     ],
     "asar": true,
     "mac": {
@@ -60,7 +72,7 @@
         "nsis"
       ],
       "icon": "assets/icon.png",
-      "artifactName": "AgentRuleKit-Desktop-${version}-Windows-${arch}.${ext}"
+      "artifactName": "ZhiShu-Desktop-${version}-Windows-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -68,7 +80,7 @@
       "perMachine": false
     },
     "dmg": {
-      "artifactName": "AgentRuleKit-Desktop-${version}-macOS-${arch}.dmg"
+      "artifactName": "ZhiShu-Desktop-${version}-macOS-${arch}.dmg"
     }
   }
 }

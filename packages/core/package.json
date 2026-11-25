@@ -1,6 +1,6 @@
 {
-  "name": "@agentrulekit/core",
-  "version": "0.1.5",
+  "name": "@zhishu/core",
+  "version": "2.0.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "test": "node --test dist/core.test.js dist/release.test.js dist/assets.test.js",
+    "test": "node --test dist/core.test.js dist/release.test.js dist/assets.test.js dist/mcp.test.js dist/sources.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
