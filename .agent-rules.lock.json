@@ -14,10 +14,7 @@
     "rule-authoring": "2.1.0"
   },
   "targets": {
-    "codex": "2.1.0",
-    "qoder": "2.1.0",
-    "cursor": "2.1.0",
-    "workbuddy": "2.1.0"
+    "codex": "2.1.0"
   },
   "managedFiles": {
     ".agent-rules/LICENSE": "sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",

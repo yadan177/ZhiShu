@@ -13,9 +13,6 @@ rulepacks:
   - rule-authoring
 targets:
   - codex
-  - qoder
-  - cursor
-  - workbuddy
 project:
   overrides: .agent-rules/overrides.md
 updates:
