@@ -470,9 +470,10 @@ function registerHandlers(): void {
   guarded("software-update:state", async () => softwareUpdate.getState());
   guarded("software-update:check", () => softwareUpdate.check());
   guarded("software-update:download", () => softwareUpdate.download());
+  guarded("software-update:cancel", async () => softwareUpdate.cancelDownload());
   guarded("software-update:install", async () => {
-    if (activeFileTasks > 0) throw new Error("文件操作仍在进行，请完成后再重启更新软件");
-    softwareUpdate.install();
+    if (activeFileTasks > 0) throw new Error("文件操作仍在进行，请完成后再安装软件更新");
+    return softwareUpdate.install();
   });
   guarded("software-update:open-download", () => softwareUpdate.openDownloadPage());
 }

@@ -1,6 +1,6 @@
 {
   "name": "zhishu-desktop",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "private": true,
   "description": "智枢桌面版",
   "main": "build/main.cjs",
@@ -36,7 +36,7 @@
   "build": {
     "appId": "cn.zhinao.zhishu",
     "productName": "智枢",
-    "buildVersion": "2.1.1",
+    "buildVersion": "2.1.2",
     "directories": {
       "output": "release"
     },

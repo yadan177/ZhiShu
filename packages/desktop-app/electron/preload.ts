@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("zhishu", {
   getSoftwareUpdate: () => ipcRenderer.invoke("software-update:state"),
   checkSoftwareUpdate: () => ipcRenderer.invoke("software-update:check"),
   downloadSoftwareUpdate: () => ipcRenderer.invoke("software-update:download"),
+  cancelSoftwareDownload: () => ipcRenderer.invoke("software-update:cancel"),
   installSoftwareUpdate: () => ipcRenderer.invoke("software-update:install"),
   openSoftwareDownload: () => ipcRenderer.invoke("software-update:open-download"),
   onSoftwareUpdate: (listener: (state: unknown) => void) => {

@@ -1,5 +1,14 @@
 # 变更记录
 
+## 2.1.2 (Desktop) - 2026-11-26
+
+### Added
+- **桌面端应用内安全下载、双向 SHA-256 校验与一键安装**：
+  - `.github/workflows/desktop-release.yml` 发版自动生成并上传 `SHA256SUMS.txt`；[desktop-releases.ts](packages/desktop-app/electron/desktop-releases.ts) 同步解析 `SHA256SUMS.txt` 与 GitHub Release 资产 `digest` / `size`。
+  - 新增纯 Node 下载校验引擎 [desktop-updater.ts](packages/desktop-app/electron/desktop-updater.ts) 与重构后的 [software-update.ts](packages/desktop-app/electron/software-update.ts)：支持受信任 GitHub CDN 重定向守卫、流式下载进度、双向 SHA-256 交叉核验、本地完整包缓存复用与旧包清理、启动前 TOCTOU 复核、中途取消（`software-update:cancel`）、macOS 可写目录原子替换重启（不可写回退自动打开 DMG）以及 Windows 自动拉起已校验安装向导。
+  - 侧边栏版本卡片新增进度条、「取消」按钮、`已就绪` 显式确认态与失败后的「浏览器下载」兜底链接。
+  - 新增 [desktop-updater.test.mjs](packages/desktop-app/tests/desktop-updater.test.mjs) 并扩充 [desktop-releases.test.mjs](packages/desktop-app/tests/desktop-releases.test.mjs) 单元测试。
+
 ## 2.1.1 (Desktop) - 2026-11-26
 
 ### Added

@@ -1,12 +1,16 @@
 export type DesktopRelease = {
   version: string;
   tag: string;
+  installerName: string;
   pageUrl: string;
   downloadUrl: string;
+  checksumUrl?: string;
+  assetDigest?: string;
+  expectedSize?: number;
   feedUrl?: string;
 };
 
-type GithubAsset = { name?: unknown };
+type GithubAsset = { name?: unknown; digest?: unknown; size?: unknown };
 type GithubRelease = {
   tag_name?: unknown;
   draft?: unknown;
@@ -16,6 +20,7 @@ type GithubRelease = {
 
 const repository = "yadan177/ZhiShu";
 const releaseTag = /^desktop-v(\d+)\.(\d+)\.(\d+)$/;
+const sha256DigestPattern = /^sha256:([a-f0-9]{64})$/i;
 
 function parts(version: string): number[] | undefined {
   const matched = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
@@ -58,16 +63,33 @@ export function selectDesktopRelease(data: unknown, platform: NodeJS.Platform, a
     if (!parts(version)?.every(Number.isSafeInteger)) continue;
     const installer = installerName(version, platform, arch);
     if (!installer || !Array.isArray(item.assets)) continue;
-    const names = new Set((item.assets as GithubAsset[]).map((asset) => asset?.name).filter((name): name is string => typeof name === "string"));
-    if (!names.has(installer)) continue;
+    const assetsByName = new Map<string, GithubAsset>();
+    for (const asset of item.assets as GithubAsset[]) {
+      if (asset && typeof asset.name === "string") assetsByName.set(asset.name, asset);
+    }
+    const matchedAsset = assetsByName.get(installer);
+    if (!matchedAsset) continue;
     if (selected && compareDesktopVersions(version, selected.version) <= 0) continue;
     const tag = item.tag_name;
+    const rawDigest = typeof matchedAsset.digest === "string" ? sha256DigestPattern.exec(matchedAsset.digest) : null;
+    const expectedSize =
+      typeof matchedAsset.size === "number" && Number.isSafeInteger(matchedAsset.size) && matchedAsset.size > 0
+        ? matchedAsset.size
+        : undefined;
     selected = {
       version,
       tag,
+      installerName: installer,
       pageUrl: `https://github.com/${repository}/releases/tag/${tag}`,
       downloadUrl: `https://github.com/${repository}/releases/download/${tag}/${installer}`,
-      ...(platform === "win32" && names.has("latest.yml") ? { feedUrl: `https://github.com/${repository}/releases/download/${tag}/` } : {}),
+      ...(assetsByName.has("SHA256SUMS.txt")
+        ? { checksumUrl: `https://github.com/${repository}/releases/download/${tag}/SHA256SUMS.txt` }
+        : {}),
+      ...(rawDigest?.[1] ? { assetDigest: `sha256:${rawDigest[1].toLowerCase()}` } : {}),
+      ...(expectedSize !== undefined ? { expectedSize } : {}),
+      ...(platform === "win32" && assetsByName.has("latest.yml")
+        ? { feedUrl: `https://github.com/${repository}/releases/download/${tag}/` }
+        : {}),
     };
   }
   return selected;

@@ -92,5 +92,7 @@ jobs:
           test -f "release-assets/ZhiShu-Desktop-${version}-macOS-arm64.dmg"
           test -f "release-assets/ZhiShu-Desktop-${version}-Windows-x64.exe"
           test ! -f release-assets/latest.yml
+          (cd release-assets && sha256sum "ZhiShu-Desktop-${version}-macOS-arm64.dmg" "ZhiShu-Desktop-${version}-Windows-x64.exe" > SHA256SUMS.txt)
+          test -s release-assets/SHA256SUMS.txt
           gh release create "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false --title "智枢 $version" --notes-file "$notes"
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false

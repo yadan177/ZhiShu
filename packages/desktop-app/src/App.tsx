@@ -335,20 +335,20 @@ export function App() {
     void (async () => {
       try {
         if (softwareState?.phase === "manual") return await desktop.openSoftwareDownload();
-        if (softwareState?.phase === "ready") return await desktop.installSoftwareUpdate();
-        let state = softwareState;
-        if (!state || state.phase === "idle" || state.phase === "current" || state.phase === "error") {
-          state = await desktop.checkSoftwareUpdate();
-        }
-        if (state.phase === "manual") return await desktop.openSoftwareDownload();
-        if (state.phase === "error") {
-          setSoftwareError(state.message ?? "检查软件版本失败");
+        if (softwareState?.phase === "ready") {
+          const next = await desktop.installSoftwareUpdate();
+          if (next?.phase === "error") setSoftwareError(next.message ?? "启动安装失败");
           return;
         }
-        if (state.phase !== "available") return;
-        state = await desktop.downloadSoftwareUpdate();
-        if (state.phase === "ready") await desktop.installSoftwareUpdate();
-        else if (state.phase === "error") setSoftwareError(state.message ?? "下载软件更新失败");
+        if (softwareState?.phase === "available" || (softwareState?.phase === "error" && softwareState.availableVersion)) {
+          const next = await desktop.downloadSoftwareUpdate();
+          if (next.phase === "error") setSoftwareError(next.message ?? "下载软件更新失败");
+          return;
+        }
+        const checked = await desktop.checkSoftwareUpdate();
+        if (checked.phase === "error") {
+          setSoftwareError(checked.message ?? "检查软件版本失败");
+        }
       } catch (problem) {
         setSoftwareError(formatErrorMessage(problem));
       } finally {
@@ -357,24 +357,47 @@ export function App() {
     })();
   }
 
+  function cancelSoftwareDownload(): void {
+    const desktop = window.zhishu;
+    if (!desktop?.cancelSoftwareDownload) return;
+    void desktop.cancelSoftwareDownload();
+  }
+
+  function openBrowserSoftwareDownload(): void {
+    const desktop = window.zhishu;
+    if (!desktop) return;
+    void desktop.openSoftwareDownload().catch((problem) => {
+      setSoftwareError(formatErrorMessage(problem));
+    });
+  }
+
+  const isSoftwareDownloading = softwareState?.phase === "downloading" || softwareState?.phase === "verifying";
   const hasSoftwareUpdate =
     softwareState?.phase === "available" ||
     softwareState?.phase === "manual" ||
     softwareState?.phase === "downloading" ||
+    softwareState?.phase === "verifying" ||
     softwareState?.phase === "ready" ||
+    softwareState?.phase === "installing" ||
     (softwareState?.phase === "error" && !!softwareState.availableVersion);
   const softwareLabel =
-    softwareState?.phase === "ready"
-      ? APP_COPY.actions.restartUpdate
-      : softwareState?.phase === "downloading"
-        ? `下载 ${softwareState.percent ?? 0}%`
-        : softwareState?.phase === "error" && softwareState.availableVersion
-          ? APP_COPY.actions.retryUpdate
-          : hasSoftwareUpdate
-            ? APP_COPY.actions.downloadUpdate
-            : softwareState?.phase === "checking"
-              ? "检查中…"
-              : APP_COPY.actions.checkSoftwareUpdate;
+    softwareState?.phase === "installing"
+      ? "安装中…"
+      : softwareState?.phase === "verifying"
+        ? "校验中…"
+        : softwareState?.phase === "downloading"
+          ? `下载中 ${softwareState.percent ?? 0}%`
+          : softwareState?.phase === "ready"
+            ? softwareState.installMode === "open-installer"
+              ? APP_COPY.actions.installUpdate
+              : APP_COPY.actions.restartUpdate
+            : softwareState?.phase === "error" && softwareState.availableVersion
+              ? APP_COPY.actions.retryUpdate
+              : hasSoftwareUpdate
+                ? APP_COPY.actions.downloadUpdate
+                : softwareState?.phase === "checking"
+                  ? "检查中…"
+                  : APP_COPY.actions.checkSoftwareUpdate;
 
   function navigateTo(next: ActiveView): void {
     clearPreview();
@@ -456,25 +479,75 @@ export function App() {
         <div className="sidebar-footer">
           <div className="version-card">
             <div className="version-card-row">
-              <span className="version-tag">v{softwareState?.currentVersion ?? "2.1.1"}</span>
-              {hasSoftwareUpdate && softwareState?.availableVersion && (
+              <span className="version-tag">v{softwareState?.currentVersion ?? "2.1.2"}</span>
+              {softwareState?.phase === "ready" && (
+                <span className="badge badge--success">已就绪</span>
+              )}
+              {softwareState?.phase !== "ready" && hasSoftwareUpdate && softwareState?.availableVersion && (
                 <span className="badge badge--brand">v{softwareState.availableVersion}</span>
               )}
               {!hasSoftwareUpdate && softwareState?.phase === "current" && (
                 <span className="badge badge--success">最新</span>
               )}
             </div>
-            {!unavailable && (
-              <button
-                type="button"
-                className={`version-action${hasSoftwareUpdate ? " has-update" : ""}`}
-                onClick={softwareAction}
-                disabled={softwareBusy || softwareState?.phase === "downloading" || softwareState?.phase === "checking"}
-                title={softwareError || softwareState?.message || undefined}
+            {isSoftwareDownloading && (
+              <div
+                className="version-progress"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={softwareState?.percent ?? 0}
               >
-                <ArrowClockwise size={13} aria-hidden="true" />
-                {softwareLabel}
-              </button>
+                <div
+                  className="version-progress-fill"
+                  style={{ width: `${Math.max(4, Math.min(100, softwareState?.percent ?? 0))}%` }}
+                />
+              </div>
+            )}
+            {!unavailable && (
+              <div className="version-action-row">
+                <button
+                  type="button"
+                  className={`version-action${hasSoftwareUpdate ? " has-update" : ""}`}
+                  onClick={softwareAction}
+                  disabled={
+                    softwareBusy ||
+                    softwareState?.phase === "downloading" ||
+                    softwareState?.phase === "verifying" ||
+                    softwareState?.phase === "installing" ||
+                    softwareState?.phase === "checking"
+                  }
+                  title={softwareError || softwareState?.message || undefined}
+                >
+                  <ArrowClockwise size={13} aria-hidden="true" />
+                  {softwareLabel}
+                </button>
+                {softwareState?.phase === "downloading" && (
+                  <button
+                    type="button"
+                    className="version-cancel"
+                    onClick={cancelSoftwareDownload}
+                  >
+                    取消
+                  </button>
+                )}
+              </div>
+            )}
+            {(softwareError || (softwareState?.phase === "error" && softwareState.message)) && (
+              <div className="version-error-row">
+                <span className="version-error-text" title={softwareError || softwareState?.message}>
+                  {softwareError || softwareState?.message}
+                </span>
+                {softwareState?.availableVersion && (
+                  <button
+                    type="button"
+                    className="version-fallback-link"
+                    onClick={openBrowserSoftwareDownload}
+                  >
+                    浏览器下载
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

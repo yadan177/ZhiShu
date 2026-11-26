@@ -392,10 +392,21 @@ export interface Preview {
 }
 
 export interface SoftwareUpdateState {
-  phase: "idle" | "checking" | "current" | "available" | "downloading" | "ready" | "manual" | "error";
+  phase:
+    | "idle"
+    | "checking"
+    | "current"
+    | "available"
+    | "downloading"
+    | "verifying"
+    | "ready"
+    | "installing"
+    | "manual"
+    | "error";
   currentVersion: string;
   availableVersion?: string;
   percent?: number;
+  installMode?: "auto-replace" | "open-installer" | "electron-updater";
   message?: string;
 }
 
@@ -522,7 +533,8 @@ export type DesktopApi = AssetsApi & {
   getSoftwareUpdate(): Promise<SoftwareUpdateState>;
   checkSoftwareUpdate(): Promise<SoftwareUpdateState>;
   downloadSoftwareUpdate(): Promise<SoftwareUpdateState>;
-  installSoftwareUpdate(): Promise<void>;
+  cancelSoftwareDownload?(): Promise<SoftwareUpdateState>;
+  installSoftwareUpdate(): Promise<SoftwareUpdateState | void>;
   openSoftwareDownload(): Promise<void>;
   onSoftwareUpdate(listener: (state: SoftwareUpdateState) => void): () => void;
 };

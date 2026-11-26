@@ -5,12 +5,21 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const { compareDesktopVersions, fetchDesktopRelease, matchesUpdateInfo, selectDesktopRelease } = require("../build/desktop-releases.cjs");
 
-function desktop(version, { draft = false, complete = true, platform = "darwin", signedFeed = false } = {}) {
+function desktop(version, { draft = false, complete = true, platform = "darwin", signedFeed = false, withSums = false, digest } = {}) {
+  const dmgName = `ZhiShu-Desktop-${version}-macOS-arm64.dmg`;
+  const exeName = `ZhiShu-Desktop-${version}-Windows-x64.exe`;
   return {
     tag_name: `desktop-v${version}`, draft, prerelease: false,
     assets: complete ? platform === "darwin"
-      ? [{ name: `ZhiShu-Desktop-${version}-macOS-arm64.dmg` }]
-      : [...(signedFeed ? [{ name: "latest.yml" }] : []), { name: `ZhiShu-Desktop-${version}-Windows-x64.exe` }]
+      ? [
+          { name: dmgName, ...(digest ? { digest } : {}), size: 150000000 },
+          ...(withSums ? [{ name: "SHA256SUMS.txt", size: 128 }] : []),
+        ]
+      : [
+          ...(signedFeed ? [{ name: "latest.yml" }] : []),
+          { name: exeName, ...(digest ? { digest } : {}), size: 130000000 },
+          ...(withSums ? [{ name: "SHA256SUMS.txt", size: 128 }] : []),
+        ]
       : [{ name: platform === "darwin" ? `ZhiShu-Desktop-${version}-macOS-arm64.zip` : "latest.yml" }],
   };
 }
@@ -57,4 +66,17 @@ test("软件版本检查固定访问公开 GitHub Release 列表，不使用规�
   assert.equal(selected?.feedUrl, undefined);
   assert.equal(selected?.pageUrl, "https://github.com/yadan177/ZhiShu/releases/tag/desktop-v1.2.0");
   await assert.rejects(fetchDesktopRelease("win32", "x64", async () => new Response("unavailable", { status: 503 })), /HTTP 503/);
+});
+
+test("提取 SHA256SUMS.txt 与 GitHub Release 资产 digest 供应用内安全更新校验", () => {
+  const hex = "a".repeat(64);
+  const rel = selectDesktopRelease(
+    [desktop("2.1.2", { platform: "darwin", withSums: true, digest: `sha256:${hex.toUpperCase()}` })],
+    "darwin",
+    "arm64",
+  );
+  assert.equal(rel?.installerName, "ZhiShu-Desktop-2.1.2-macOS-arm64.dmg");
+  assert.equal(rel?.checksumUrl, "https://github.com/yadan177/ZhiShu/releases/download/desktop-v2.1.2/SHA256SUMS.txt");
+  assert.equal(rel?.assetDigest, `sha256:${hex}`);
+  assert.equal(rel?.expectedSize, 150000000);
 });

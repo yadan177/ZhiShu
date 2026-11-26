@@ -38,6 +38,14 @@ await Promise.all([
     target: "node22",
   }),
   build({
+    entryPoints: ["electron/desktop-updater.ts"],
+    outfile: "build/desktop-updater.cjs",
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node22",
+  }),
+  build({
     entryPoints: ["electron/plugin-library.ts"],
     outfile: "build/plugin-library.cjs",
     bundle: true,
