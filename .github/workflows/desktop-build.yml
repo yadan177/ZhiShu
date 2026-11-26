@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/desktop-build.yml'
       - 'packages/desktop-app/**'
+      - 'packages/core/**'
+      - 'adapters/**'
+      - 'plugins/**'
       - 'package-lock.json'
 
 permissions:

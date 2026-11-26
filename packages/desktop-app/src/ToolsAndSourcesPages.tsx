@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowClockwise, Check, CheckCircle, FolderOpen, Plus, ShieldCheck, Trash, WarningCircle, X } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowClockwise, Check, CheckCircle, FolderOpen, PencilSimple, Plus, ShieldCheck, Trash, WarningCircle, X } from "@phosphor-icons/react";
 import { AssetGlyph, IconTile, glyphForAsset } from "./BrandIcons";
 import { APP_COPY, RULEPACK_CATALOG } from "./copy";
 import { Dropdown } from "./Dropdown";
@@ -11,8 +11,10 @@ import {
   type InstalledAssetRecord,
   type InstalledMcpRecord,
   type LegacyAssetCandidate,
+  type LegacyMcpCandidate,
   type McpPreview,
   type McpServerDefinition,
+  type McpToolId,
   type PluginSource,
   type SourceTestResult,
   type ToolInspection,
@@ -46,8 +48,12 @@ const CAPABILITY_ORDER: Array<"rules" | "skill" | "mcp" | "plugin"> = ["rules", 
 const ACTION_VERBS = { install: "安装", update: "更新", uninstall: "卸载" } as const;
 
 function compareSemver(a: string, b: string): number {
-  const [aCore = "", aPre] = a.split("-", 2);
-  const [bCore = "", bPre] = b.split("-", 2);
+  const splitVer = (value: string): [string, string | undefined] => {
+    const idx = value.indexOf("-");
+    return idx === -1 ? [value, undefined] : [value.slice(0, idx), value.slice(idx + 1)];
+  };
+  const [aCore, aPre] = splitVer(a);
+  const [bCore, bPre] = splitVer(b);
   const aParts = aCore.split(".").map((n) => Number.parseInt(n, 10) || 0);
   const bParts = bCore.split(".").map((n) => Number.parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) {
@@ -58,6 +64,12 @@ function compareSemver(a: string, b: string): number {
   if (aPre && !bPre) return -1;
   if (aPre && bPre) return aPre.localeCompare(bPre);
   return 0;
+}
+
+function normalizeDigest(digest?: string): string | undefined {
+  if (!digest) return undefined;
+  const cleaned = digest.replace(/^sha256:/i, "");
+  return /^[a-f0-9]{64}$/i.test(cleaned) ? cleaned.toLowerCase() : undefined;
 }
 
 function formatCompactPath(rawPath: string): string {
@@ -90,57 +102,129 @@ function formatToolCount(tool: ToolInspection): string {
 export function ToolsPage({
   api,
   onOpenAssets,
+  onBusyChange,
 }: {
   api?: DesktopApi;
   onOpenAssets: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [tools, setTools] = useState<ToolInspection[]>([]);
   const [selectedTool, setSelectedTool] = useState<AssetIde | "all">("all");
   const [sources, setSources] = useState<PluginSource[]>([]);
   const [installedAssets, setInstalledAssets] = useState<InstalledAssetRecord[]>([]);
   const [legacyItems, setLegacyItems] = useState<LegacyAssetCandidate[]>([]);
+  const [legacyMcps, setLegacyMcps] = useState<LegacyMcpCandidate[]>([]);
   const [mcpCatalog, setMcpCatalog] = useState<McpServerDefinition[]>([]);
   const [installedMcps, setInstalledMcps] = useState<InstalledMcpRecord[]>([]);
   const [updateKeys, setUpdateKeys] = useState<Record<string, string>>({});
 
   const [showLegacyModal, setShowLegacyModal] = useState(false);
-  const [assetPlan, setAssetPlan] = useState<UserAssetPlan>();
-  const [mcpPreview, setMcpPreview] = useState<McpPreview>();
-  const [editingMcp, setEditingMcp] = useState<{ record: InstalledMcpRecord; def: McpServerDefinition }>();
+  const [selectedLegacyAssets, setSelectedLegacyAssets] = useState<string[]>([]);
+  const [selectedLegacyMcps, setSelectedLegacyMcps] = useState<string[]>([]);
+  const [assetPlan, setAssetPlan] = useState<UserAssetPlan & { force?: boolean }>();
+  const [assetPlanChangeIdx, setAssetPlanChangeIdx] = useState(0);
+  const [mcpPreview, setMcpPreview] = useState<McpPreview & { force?: boolean }>();
+  const [editingMcp, setEditingMcp] = useState<{ record: InstalledMcpRecord; def: McpServerDefinition; force?: boolean }>();
   const [editEnv, setEditEnv] = useState<Record<string, string>>({});
   const [revealedKeys, setRevealedKeys] = useState<Record<string, boolean>>({});
+  const [confirmForget, setConfirmForget] = useState<
+    | { kind: "asset"; ide: AssetIde; id: string; title: string; destination: string }
+    | { kind: "mcp"; toolId: McpToolId; id: string; title: string; targetPath: string }
+  >();
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [overlayError, setOverlayError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      onBusyChange?.(false);
+    };
+  }, [onBusyChange]);
+
+  function setBusyState(next: boolean): void {
+    if (!mountedRef.current) return;
+    setBusy(next);
+    onBusyChange?.(next);
+  }
+
   async function refreshAll(currentApi: DesktopApi): Promise<void> {
-    const [toolList, imports, assets, catalog, mcps, legacy] = await Promise.all([
+    if (currentApi.getToolsSnapshot) {
+      const [snapshotRes, importsRes, catalogRes] = await Promise.allSettled([
+        currentApi.getToolsSnapshot(),
+        currentApi.listPluginImports(),
+        currentApi.listMcpCatalog(),
+      ]);
+      if (!mountedRef.current) return;
+      const errors: string[] = [];
+      if (snapshotRes.status === "fulfilled") {
+        setTools(snapshotRes.value.tools);
+        setInstalledAssets(snapshotRes.value.assets);
+        setInstalledMcps(snapshotRes.value.mcps);
+        setLegacyItems(snapshotRes.value.legacyAssets);
+        setLegacyMcps(snapshotRes.value.legacyMcps);
+      } else {
+        errors.push(formatErrorMessage(snapshotRes.reason));
+      }
+      if (importsRes.status === "fulfilled") setSources(importsRes.value);
+      else errors.push(formatErrorMessage(importsRes.reason));
+      if (catalogRes.status === "fulfilled") setMcpCatalog(catalogRes.value);
+      else errors.push(formatErrorMessage(catalogRes.reason));
+      if (errors.length > 0) setError(errors.join("；"));
+      return;
+    }
+    const [toolRes, importsRes, assetsRes, catalogRes, mcpsRes, legacyRes, legacyMcpRes] = await Promise.allSettled([
       currentApi.inspectTools(),
       currentApi.listPluginImports(),
       currentApi.listUserAssets(),
       currentApi.listMcpCatalog(),
       currentApi.listInstalledMcps(),
       currentApi.inspectLegacyAssets ? currentApi.inspectLegacyAssets() : Promise.resolve([]),
+      currentApi.inspectLegacyMcps ? currentApi.inspectLegacyMcps() : Promise.resolve([]),
     ]);
-    setTools(toolList);
-    setSources(imports);
-    setInstalledAssets(assets);
-    setMcpCatalog(catalog);
-    setInstalledMcps(mcps);
-    setLegacyItems(legacy);
+    if (!mountedRef.current) return;
+    const errors: string[] = [];
+    if (toolRes.status === "fulfilled") setTools(toolRes.value);
+    else errors.push(formatErrorMessage(toolRes.reason));
+    if (importsRes.status === "fulfilled") setSources(importsRes.value);
+    else errors.push(formatErrorMessage(importsRes.reason));
+    if (assetsRes.status === "fulfilled") setInstalledAssets(assetsRes.value);
+    else errors.push(formatErrorMessage(assetsRes.reason));
+    if (catalogRes.status === "fulfilled") setMcpCatalog(catalogRes.value);
+    else errors.push(formatErrorMessage(catalogRes.reason));
+    if (mcpsRes.status === "fulfilled") setInstalledMcps(mcpsRes.value);
+    else errors.push(formatErrorMessage(mcpsRes.reason));
+    if (legacyRes.status === "fulfilled") setLegacyItems(legacyRes.value);
+    if (legacyMcpRes.status === "fulfilled") setLegacyMcps(legacyMcpRes.value);
+    if (errors.length > 0) setError(errors.join("；"));
   }
 
-  async function run(action: () => Promise<void>): Promise<void> {
-    setBusy(true);
-    setError("");
+  async function run(
+    action: () => Promise<void>,
+    options: { overlay?: boolean } = {},
+  ): Promise<void> {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setBusyState(true);
+    if (options.overlay) setOverlayError("");
+    else setError("");
     setNotice("");
     try {
       await action();
     } catch (problem) {
-      setError(formatErrorMessage(problem));
+      if (!mountedRef.current) return;
+      const msg = formatErrorMessage(problem);
+      if (options.overlay) setOverlayError(msg);
+      else setError(msg);
     } finally {
-      setBusy(false);
+      inFlightRef.current = false;
+      setBusyState(false);
     }
   }
 
@@ -150,25 +234,11 @@ export function ToolsPage({
     setBusy(true);
     void (async () => {
       try {
-        const [toolList, imports, assets, catalog, mcps, legacy] = await Promise.all([
-          api.inspectTools(),
-          api.listPluginImports(),
-          api.listUserAssets(),
-          api.listMcpCatalog(),
-          api.listInstalledMcps(),
-          api.inspectLegacyAssets ? api.inspectLegacyAssets() : Promise.resolve([]),
-        ]);
-        if (cancelled) return;
-        setTools(toolList);
-        setSources(imports);
-        setInstalledAssets(assets);
-        setMcpCatalog(catalog);
-        setInstalledMcps(mcps);
-        setLegacyItems(legacy);
+        await refreshAll(api);
       } catch (problem) {
-        if (!cancelled) setError(formatErrorMessage(problem));
+        if (!cancelled && mountedRef.current) setError(formatErrorMessage(problem));
       } finally {
-        if (!cancelled) setBusy(false);
+        if (!cancelled && mountedRef.current) setBusy(false);
       }
     })();
     return () => {
@@ -185,6 +255,29 @@ export function ToolsPage({
   const visibleLegacy = selectedTool === "all"
     ? legacyItems
     : legacyItems.filter((item) => item.ideId === selectedTool);
+  const visibleLegacyMcps = selectedTool === "all"
+    ? legacyMcps
+    : legacyMcps.filter((item) => item.toolId === selectedTool);
+  const totalLegacyCount = visibleLegacy.length + visibleLegacyMcps.length;
+
+  function openLegacyModal(): void {
+    setOverlayError("");
+    setSelectedLegacyAssets(visibleLegacy.map((item) => item.key));
+    setSelectedLegacyMcps(visibleLegacyMcps.map((item) => item.key));
+    setShowLegacyModal(true);
+  }
+
+  function closeAssetPlanModal(): void {
+    setAssetPlan(undefined);
+    setOverlayError("");
+    void api?.clearUserAssetPreview?.().catch(() => {});
+  }
+
+  function closeMcpPreviewModal(): void {
+    setMcpPreview(undefined);
+    setOverlayError("");
+    void api?.clearMcpPreview?.().catch(() => {});
+  }
 
   const enrichedAssets = filteredAssets.map((item) => {
     const sourceName = item.sourceKey.split("@")[0].replace(/^skill\./, "");
@@ -194,13 +287,15 @@ export function ToolsPage({
       .sort((a, b) => compareSemver(a.version, b.version));
     const latestCandidate = candidates.at(-1);
     const hasNewerVersion = latestCandidate ? compareSemver(latestCandidate.version, item.version) > 0 : false;
+    const itemDigest = normalizeDigest(item.sourceDigest);
+    const latestDigest = normalizeDigest(latestCandidate?.sourceDigest);
     const hasContentUpdate = Boolean(
       !hasNewerVersion &&
         latestCandidate &&
         latestCandidate.version === item.version &&
-        item.sourceDigest &&
-        /^[a-f0-9]{64}$/.test(item.sourceDigest) &&
-        latestCandidate.sourceDigest !== item.sourceDigest,
+        itemDigest &&
+        latestDigest &&
+        latestDigest !== itemDigest,
     );
     const isPreset = candidates.some((c) => c.preset) || (!item.sourceKey.startsWith("skill.") && sourceName.startsWith("zhishu-"));
     return { item, candidates, latestCandidate, hasNewerVersion, hasContentUpdate, isPreset };
@@ -209,11 +304,18 @@ export function ToolsPage({
   const conflictCount =
     enrichedAssets.filter(({ item }) => item.issues.length > 0).length +
     filteredMcps.filter((record) => record.issues.length > 0).length;
-  const updatableCount = enrichedAssets.filter(
-    ({ item, hasNewerVersion, hasContentUpdate }) => item.issues.length === 0 && (hasNewerVersion || hasContentUpdate),
-  ).length;
+  const updatableCount =
+    enrichedAssets.filter(
+      ({ item, hasNewerVersion, hasContentUpdate }) => item.issues.length === 0 && (hasNewerVersion || hasContentUpdate),
+    ).length +
+    filteredMcps.filter((record) => {
+      if (record.issues.length > 0) return false;
+      const def = mcpCatalog.find((item) => item.id === record.id);
+      return Boolean(def && compareSemver(def.version, record.version) > 0);
+    }).length;
   const totalVisibleCount = enrichedAssets.length + filteredMcps.length;
   const normalCount = Math.max(0, totalVisibleCount - conflictCount - updatableCount);
+  const currentPlanChange = assetPlan?.changes[assetPlanChangeIdx];
 
   return (
     <div className="workspace-scroll">
@@ -278,17 +380,17 @@ export function ToolsPage({
         })}
       </section>
 
-      {visibleLegacy.length > 0 && (
+      {totalLegacyCount > 0 && (
         <section className="legacy-takeover-banner" role="status" aria-label="旧版记录接管提示">
           <div className="legacy-takeover-left">
             <span className="badge badge--warning">旧版记录</span>
-            <span>发现 {visibleLegacy.length} 项旧版智枢记录或未纳管官方插件</span>
+            <span>发现 {totalLegacyCount} 项旧版智枢记录或未纳管官方资产</span>
           </div>
           <button
             type="button"
             className="secondary-button btn-compact"
             disabled={busy || !api}
-            onClick={() => setShowLegacyModal(true)}
+            onClick={openLegacyModal}
           >
             接管旧版
           </button>
@@ -340,12 +442,12 @@ export function ToolsPage({
               const selectedVersionKey =
                 candidates.find((c) => c.key === updateKeys[rowKey])?.key ?? latestCandidate?.key ?? item.sourceKey;
               const selectedCandidate = candidates.find((c) => c.key === selectedVersionKey);
+              const itemDigest = normalizeDigest(item.sourceDigest);
+              const selectedDigest = normalizeDigest(selectedCandidate?.sourceDigest);
               const selectedDiffers = Boolean(
                 selectedCandidate &&
                   (selectedCandidate.version !== item.version ||
-                    (item.sourceDigest &&
-                      /^[a-f0-9]{64}$/.test(item.sourceDigest) &&
-                      selectedCandidate.sourceDigest !== item.sourceDigest)),
+                    (itemDigest && selectedDigest && selectedDigest !== itemDigest)),
               );
               const compactDest = formatCompactPath(item.destination);
               const subLineText = hasConflict
@@ -386,14 +488,84 @@ export function ToolsPage({
                     {hasConflict ? (
                       <>
                         <span className="badge badge--danger">冲突·需处理</span>
-                        <button type="button" className="secondary-button btn-compact" disabled>
-                          卸载
+                        {latestCandidate && (
+                          <button
+                            type="button"
+                            className="primary-button btn-compact"
+                            disabled={busy || !api}
+                            onClick={() => {
+                              if (api) {
+                                void run(async () => {
+                                  const plan = await api.previewUserAsset(
+                                    "update",
+                                    latestCandidate.key,
+                                    item.target.ideId,
+                                    item.id,
+                                    true,
+                                  );
+                                  if (mountedRef.current) {
+                                    setAssetPlanChangeIdx(0);
+                                    setOverlayError("");
+                                    setAssetPlan({ ...plan, force: true });
+                                  }
+                                });
+                              }
+                            }}
+                          >
+                            覆盖修复
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="danger-outline-button btn-compact"
+                          disabled={busy || !api}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                const plan = await api.previewUserAsset(
+                                  "uninstall",
+                                  "",
+                                  item.target.ideId,
+                                  item.id,
+                                  true,
+                                );
+                                if (mountedRef.current) {
+                                  setAssetPlanChangeIdx(0);
+                                  setOverlayError("");
+                                  setAssetPlan({ ...plan, force: true });
+                                }
+                              });
+                            }
+                          }}
+                        >
+                          强制卸载
                         </button>
+                        {api?.forgetUserAsset && (
+                          <button
+                            type="button"
+                            className="text-button btn-compact"
+                            disabled={busy}
+                            onClick={() => {
+                              setOverlayError("");
+                              setConfirmForget({
+                                kind: "asset",
+                                ide: item.target.ideId,
+                                id: item.id,
+                                title: item.title,
+                                destination: item.destination,
+                              });
+                            }}
+                          >
+                            清除记录
+                          </button>
+                        )}
                       </>
                     ) : isMultiVersion ? (
                       <>
                         {hasNewerVersion && latestCandidate ? (
                           <span className="badge badge--brand">可更新至 v{latestCandidate.version}</span>
+                        ) : hasContentUpdate ? (
+                          <span className="badge badge--brand">有内容更新</span>
                         ) : (
                           <span className="badge badge--success">
                             {item.recognition === "host-verified" ? "已识别" : "正常"}
@@ -415,9 +587,17 @@ export function ToolsPage({
                           onClick={() => {
                             if (api) {
                               void run(async () => {
-                                setAssetPlan(
-                                  await api.previewUserAsset("update", selectedVersionKey, item.target.ideId, item.id),
+                                const plan = await api.previewUserAsset(
+                                  "update",
+                                  selectedVersionKey,
+                                  item.target.ideId,
+                                  item.id,
                                 );
+                                if (mountedRef.current) {
+                                  setAssetPlanChangeIdx(0);
+                                  setOverlayError("");
+                                  setAssetPlan(plan);
+                                }
                               });
                             }
                           }}
@@ -431,7 +611,12 @@ export function ToolsPage({
                           onClick={() => {
                             if (api) {
                               void run(async () => {
-                                setAssetPlan(await api.previewUserAsset("uninstall", "", item.target.ideId, item.id));
+                                const plan = await api.previewUserAsset("uninstall", "", item.target.ideId, item.id);
+                                if (mountedRef.current) {
+                                  setAssetPlanChangeIdx(0);
+                                  setOverlayError("");
+                                  setAssetPlan(plan);
+                                }
                               });
                             }
                           }}
@@ -452,9 +637,17 @@ export function ToolsPage({
                           onClick={() => {
                             if (api) {
                               void run(async () => {
-                                setAssetPlan(
-                                  await api.previewUserAsset("update", latestCandidate.key, item.target.ideId, item.id),
+                                const plan = await api.previewUserAsset(
+                                  "update",
+                                  latestCandidate.key,
+                                  item.target.ideId,
+                                  item.id,
                                 );
+                                if (mountedRef.current) {
+                                  setAssetPlanChangeIdx(0);
+                                  setOverlayError("");
+                                  setAssetPlan(plan);
+                                }
                               });
                             }
                           }}
@@ -468,7 +661,12 @@ export function ToolsPage({
                           onClick={() => {
                             if (api) {
                               void run(async () => {
-                                setAssetPlan(await api.previewUserAsset("uninstall", "", item.target.ideId, item.id));
+                                const plan = await api.previewUserAsset("uninstall", "", item.target.ideId, item.id);
+                                if (mountedRef.current) {
+                                  setAssetPlanChangeIdx(0);
+                                  setOverlayError("");
+                                  setAssetPlan(plan);
+                                }
                               });
                             }
                           }}
@@ -489,7 +687,12 @@ export function ToolsPage({
                           onClick={() => {
                             if (api) {
                               void run(async () => {
-                                setAssetPlan(await api.previewUserAsset("uninstall", "", item.target.ideId, item.id));
+                                const plan = await api.previewUserAsset("uninstall", "", item.target.ideId, item.id);
+                                if (mountedRef.current) {
+                                  setAssetPlanChangeIdx(0);
+                                  setOverlayError("");
+                                  setAssetPlan(plan);
+                                }
                               });
                             }
                           }}
@@ -506,6 +709,7 @@ export function ToolsPage({
             {filteredMcps.map((record) => {
               const def = mcpCatalog.find((item) => item.id === record.id);
               const hasConflict = record.issues.length > 0;
+              const hasUpdate = Boolean(!hasConflict && def && compareSemver(def.version, record.version) > 0);
               const compactTarget = formatCompactPath(record.targetPath);
               const subLine = hasConflict
                 ? `${compactTarget} · ${record.issues[0]}`
@@ -540,37 +744,119 @@ export function ToolsPage({
                     </div>
                   </div>
                   <div className="tool-asset-actions">
-                    <span className={`badge ${hasConflict ? "badge--danger" : "badge--success"}`}>
-                      {hasConflict ? "冲突·需处理" : "正常"}
-                    </span>
-                    {def && def.envSchema.length > 0 && !hasConflict && (
-                      <button
-                        type="button"
-                        className="secondary-button btn-compact"
-                        disabled={busy || !api}
-                        onClick={() => {
-                          setEditingMcp({ record, def });
-                          setEditEnv(Object.fromEntries(def.envSchema.map((f) => [f.key, ""])));
-                          setRevealedKeys({});
-                        }}
-                      >
-                        环境变量
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="secondary-button btn-compact"
-                      disabled={busy || !api || hasConflict}
-                      onClick={() => {
-                        if (api) {
-                          void run(async () => {
-                            setMcpPreview(await api.previewMcp("uninstall", record.id, record.toolId));
-                          });
-                        }
-                      }}
+                    <span
+                      className={`badge ${
+                        hasConflict ? "badge--danger" : hasUpdate ? "badge--brand" : "badge--success"
+                      }`}
                     >
-                      卸载
-                    </button>
+                      {hasConflict ? "冲突·需处理" : hasUpdate && def ? `可更新至 v${def.version}` : "正常"}
+                    </span>
+                    {hasConflict ? (
+                      <>
+                        {def && (
+                          <button
+                            type="button"
+                            className="primary-button btn-compact"
+                            disabled={busy || !api}
+                            onClick={() => {
+                              setOverlayError("");
+                              if (def.envSchema.length > 0) {
+                                setEditingMcp({ record, def, force: true });
+                                setEditEnv(Object.fromEntries(def.envSchema.map((f) => [f.key, ""])));
+                                setRevealedKeys({});
+                              } else if (api) {
+                                void run(async () => {
+                                  const preview = await api.previewMcp("update", record.id, record.toolId, {}, true);
+                                  if (mountedRef.current) setMcpPreview({ ...preview, force: true });
+                                });
+                              }
+                            }}
+                          >
+                            覆盖修复
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="danger-outline-button btn-compact"
+                          disabled={busy || !api}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                const preview = await api.previewMcp("uninstall", record.id, record.toolId, {}, true);
+                                if (mountedRef.current) {
+                                  setOverlayError("");
+                                  setMcpPreview({ ...preview, force: true });
+                                }
+                              });
+                            }
+                          }}
+                        >
+                          强制卸载
+                        </button>
+                        {api?.forgetMcp && (
+                          <button
+                            type="button"
+                            className="text-button btn-compact"
+                            disabled={busy}
+                            onClick={() => {
+                              setOverlayError("");
+                              setConfirmForget({
+                                kind: "mcp",
+                                toolId: record.toolId,
+                                id: record.id,
+                                title: record.title,
+                                targetPath: record.targetPath,
+                              });
+                            }}
+                          >
+                            清除记录
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {def && (def.envSchema.length > 0 || hasUpdate) && (
+                          <button
+                            type="button"
+                            className={`${hasUpdate ? "primary-button" : "secondary-button"} btn-compact`}
+                            disabled={busy || !api}
+                            onClick={() => {
+                              setOverlayError("");
+                              if (def.envSchema.length > 0) {
+                                setEditingMcp({ record, def });
+                                setEditEnv(Object.fromEntries(def.envSchema.map((f) => [f.key, ""])));
+                                setRevealedKeys({});
+                              } else if (api) {
+                                void run(async () => {
+                                  const preview = await api.previewMcp("update", record.id, record.toolId, {});
+                                  if (mountedRef.current) setMcpPreview(preview);
+                                });
+                              }
+                            }}
+                          >
+                            {hasUpdate ? "更新" : "环境变量"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="secondary-button btn-compact"
+                          disabled={busy || !api}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                const preview = await api.previewMcp("uninstall", record.id, record.toolId);
+                                if (mountedRef.current) {
+                                  setOverlayError("");
+                                  setMcpPreview(preview);
+                                }
+                              });
+                            }
+                          }}
+                        >
+                          卸载
+                        </button>
+                      </>
+                    )}
                   </div>
                 </article>
               );
@@ -593,91 +879,182 @@ export function ToolsPage({
       )}
 
       {/* 接管旧版记录预览弹窗 (04-C) */}
-      {showLegacyModal && visibleLegacy.length > 0 && (
+      {showLegacyModal && totalLegacyCount > 0 && (
         <div className="modal-backdrop">
           <section className="modal legacy-modal" role="dialog" aria-modal="true" aria-label="接管旧版记录">
             <header className="modal-header">
               <div className="tools-list-header-left">
                 <h2>接管旧版记录</h2>
-                <span className="badge badge--warning">{visibleLegacy.length} 项待接管</span>
+                <span className="badge badge--warning">{totalLegacyCount} 项待接管</span>
               </div>
               <button
                 type="button"
                 className="icon-button"
                 aria-label="关闭"
                 disabled={busy}
-                onClick={() => setShowLegacyModal(false)}
+                onClick={() => {
+                  setShowLegacyModal(false);
+                  setOverlayError("");
+                }}
               >
                 <X size={18} />
               </button>
             </header>
             <div className="modal-body">
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0, marginBottom: 10 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               <div className="target-config-strip">
-                <span className="badge badge--success">只读安全</span>
-                <span>仅补写智枢本地回执，不修改目标工具目录中的已有文件</span>
+                <span className="badge badge--success">按勾选接管</span>
+                <span>仅补写智枢本地回执（旧版 Codex 插件会迁移至新数据目录），不覆盖目标工具已有技能</span>
               </div>
               <div className="tool-asset-list" style={{ marginTop: 12 }}>
-                {visibleLegacy.map((item) => (
-                  <article className="tool-asset-row" key={item.key}>
-                    <div className="tool-asset-main">
-                      <IconTile size="sm">
-                        <AssetGlyph kind={glyphForAsset(item.id, item.assetKind)} size={18} />
-                      </IconTile>
-                      <div className="tool-asset-info">
-                        <div className="tool-asset-title-line">
-                          <span className={`badge ${item.assetKind === "skill" ? "badge--brand" : "badge--enterprise"}`}>
-                            {item.assetKind === "skill" ? "技能" : "插件"}
+                {visibleLegacy.map((item) => {
+                  const checked = selectedLegacyAssets.includes(item.key);
+                  return (
+                    <article className={`tool-asset-row${item.issues.length ? " has-conflict" : ""}`} key={`asset:${item.key}`}>
+                      <div className="tool-asset-main">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          aria-label={`勾选接管 ${item.title}`}
+                          onChange={() =>
+                            setSelectedLegacyAssets((cur) =>
+                              cur.includes(item.key) ? cur.filter((k) => k !== item.key) : [...cur, item.key],
+                            )
+                          }
+                        />
+                        <IconTile size="sm">
+                          <AssetGlyph kind={glyphForAsset(item.id, item.assetKind)} size={18} />
+                        </IconTile>
+                        <div className="tool-asset-info">
+                          <div className="tool-asset-title-line">
+                            <span className={`badge ${item.assetKind === "skill" ? "badge--brand" : "badge--enterprise"}`}>
+                              {item.assetKind === "skill" ? "技能" : "插件"}
+                            </span>
+                            <strong className="tool-asset-title">{item.title}</strong>
+                            <span className="tool-asset-version">v{item.version}</span>
+                            <span className="badge badge--muted">{TOOL_SHORT_LABELS[item.ideId]}</span>
+                          </div>
+                          <span
+                            className={`tool-asset-path${item.issues.length ? " is-danger" : ""}`}
+                            title={item.issues.length ? `${item.destination}\n${item.issues.join("\n")}` : item.destination}
+                          >
+                            {formatCompactPath(item.destination)}
+                            {item.issues.length > 0 ? ` · ${item.issues[0]}` : ""}
                           </span>
-                          <strong className="tool-asset-title">{item.title}</strong>
-                          <span className="tool-asset-version">v{item.version}</span>
-                          <span className="badge badge--muted">{TOOL_SHORT_LABELS[item.ideId]}</span>
                         </div>
+                      </div>
+                      <div className="tool-asset-actions">
                         <span
-                          className={`tool-asset-path${item.issues.length ? " is-danger" : ""}`}
-                          title={item.issues.length ? `${item.destination}\n${item.issues.join("\n")}` : item.destination}
+                          className={`badge ${
+                            item.issues.length
+                              ? "badge--danger"
+                              : item.kind === "legacy-receipt"
+                                ? "badge--brand"
+                                : "badge--warning"
+                          }`}
                         >
-                          {formatCompactPath(item.destination)}
-                          {item.issues.length > 0 ? ` · ${item.issues[0]}` : ""}
+                          {item.originLabel}
                         </span>
                       </div>
-                    </div>
-                    <div className="tool-asset-actions">
-                      <span className={`badge ${item.kind === "legacy-receipt" ? "badge--brand" : "badge--warning"}`}>
-                        {item.originLabel}
-                      </span>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
+                {visibleLegacyMcps.map((item) => {
+                  const checked = selectedLegacyMcps.includes(item.key);
+                  return (
+                    <article className={`tool-asset-row${item.issues.length ? " has-conflict" : ""}`} key={`mcp:${item.key}`}>
+                      <div className="tool-asset-main">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          aria-label={`勾选接管 ${item.title}`}
+                          onChange={() =>
+                            setSelectedLegacyMcps((cur) =>
+                              cur.includes(item.key) ? cur.filter((k) => k !== item.key) : [...cur, item.key],
+                            )
+                          }
+                        />
+                        <IconTile size="sm">
+                          <AssetGlyph kind={item.id === "feishu-mcp" ? "feishu" : "local_plugin"} size={18} />
+                        </IconTile>
+                        <div className="tool-asset-info">
+                          <div className="tool-asset-title-line">
+                            <span className="badge badge--mcp">MCP</span>
+                            <strong className="tool-asset-title">{item.title}</strong>
+                            <span className="tool-asset-version">v{item.version}</span>
+                            <span className="badge badge--muted">{TOOL_SHORT_LABELS[item.toolId]}</span>
+                          </div>
+                          <span
+                            className={`tool-asset-path${item.issues.length ? " is-danger" : ""}`}
+                            title={item.issues.length ? `${item.targetPath}\n${item.issues.join("\n")}` : item.targetPath}
+                          >
+                            {formatCompactPath(item.targetPath)}
+                            {item.issues.length > 0 ? ` · ${item.issues[0]}` : ""}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="tool-asset-actions">
+                        <span className={`badge ${item.issues.length ? "badge--danger" : "badge--brand"}`}>
+                          {item.originLabel}
+                        </span>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             </div>
             <footer className="modal-actions modal-actions--spread">
-              <span className="modal-footer-hint">接管后可在已安装清单中直接更新或卸载</span>
+              <span className="modal-footer-hint">接管后可在已安装清单中直接更新、修复或卸载</span>
               <div className="modal-actions-group">
                 <button
                   type="button"
                   className="secondary-button"
                   disabled={busy}
-                  onClick={() => setShowLegacyModal(false)}
+                  onClick={() => {
+                    setShowLegacyModal(false);
+                    setOverlayError("");
+                  }}
                 >
                   返回
                 </button>
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={busy || !api?.adoptLegacyAssets}
+                  disabled={busy || !api || selectedLegacyAssets.length + selectedLegacyMcps.length === 0}
                   onClick={() => {
-                    if (api?.adoptLegacyAssets) {
-                      const keys = visibleLegacy.map((item) => item.key);
-                      void run(async () => {
-                        const result = await api.adoptLegacyAssets!(keys);
-                        await refreshAll(api);
-                        setShowLegacyModal(false);
-                        setNotice(`已接管 ${result.adoptedCount} 项旧版记录`);
-                      });
-                    }
+                    if (!api) return;
+                    const assetKeys = [...selectedLegacyAssets];
+                    const mcpKeys = [...selectedLegacyMcps];
+                    void run(
+                      async () => {
+                        let adopted = 0;
+                        try {
+                          if (assetKeys.length > 0 && api.adoptLegacyAssets) {
+                            const res = await api.adoptLegacyAssets(assetKeys);
+                            adopted += res.adoptedCount;
+                          }
+                          if (mcpKeys.length > 0 && api.adoptLegacyMcps) {
+                            const res = await api.adoptLegacyMcps(mcpKeys);
+                            adopted += res.adoptedCount;
+                          }
+                        } finally {
+                          await refreshAll(api);
+                        }
+                        if (mountedRef.current) {
+                          setShowLegacyModal(false);
+                          setNotice(`已接管 ${adopted} 项旧版记录`);
+                        }
+                      },
+                      { overlay: true },
+                    );
                   }}
                 >
-                  确认接管 ({visibleLegacy.length})
+                  确认接管 ({selectedLegacyAssets.length + selectedLegacyMcps.length})
                 </button>
               </div>
             </footer>
@@ -685,19 +1062,112 @@ export function ToolsPage({
         </div>
       )}
 
-      {/* MCP 环境变量快捷修改弹窗 */}
+      {/* 清除记录确认弹窗 */}
+      {confirmForget && (
+        <div className="modal-backdrop">
+          <section className="modal" role="dialog" aria-modal="true" aria-label="确认清除本地记录">
+            <header className="modal-header">
+              <h2>清除智枢安装记录</h2>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="关闭"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmForget(undefined);
+                  setOverlayError("");
+                }}
+              >
+                <X size={18} />
+              </button>
+            </header>
+            <div className="modal-body">
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
+              <div className="preview-meta">
+                <strong>{confirmForget.title}</strong>
+                <span>{confirmForget.kind === "asset" ? confirmForget.destination : confirmForget.targetPath}</span>
+              </div>
+              <p className="mono-inline" style={{ marginTop: 10 }}>
+                仅移除智枢本地跟踪回执，不修改或删除目标工具目录中的已有文件。
+              </p>
+            </div>
+            <footer className="modal-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmForget(undefined);
+                  setOverlayError("");
+                }}
+              >
+                返回
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={busy || !api}
+                onClick={() => {
+                  if (!api) return;
+                  const target = confirmForget;
+                  void run(
+                    async () => {
+                      if (target.kind === "asset" && api.forgetUserAsset) {
+                        await api.forgetUserAsset(target.ide, target.id);
+                      } else if (target.kind === "mcp" && api.forgetMcp) {
+                        await api.forgetMcp(target.toolId, target.id);
+                      }
+                      await refreshAll(api);
+                      if (mountedRef.current) {
+                        setConfirmForget(undefined);
+                        setNotice(`已清除记录：${target.title}`);
+                      }
+                    },
+                    { overlay: true },
+                  );
+                }}
+              >
+                确认清除记录
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {/* MCP 环境变量快捷修改 / 覆盖修复弹窗 */}
       {editingMcp && (
         <div className="modal-backdrop">
           <section className="modal" role="dialog" aria-modal="true" aria-label="修改 MCP 环境变量">
             <header className="modal-header">
               <h2>
-                修改环境变量 · {editingMcp.record.title} ({TOOL_LABELS[editingMcp.record.toolId]})
+                {editingMcp.force ? "覆盖修复 · " : "修改环境变量 · "}
+                {editingMcp.record.title} ({TOOL_LABELS[editingMcp.record.toolId]})
               </h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setEditingMcp(undefined)}>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="关闭"
+                disabled={busy}
+                onClick={() => {
+                  setEditingMcp(undefined);
+                  setOverlayError("");
+                }}
+              >
                 <X size={18} />
               </button>
             </header>
             <div className="modal-body">
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               <div className="drawer-section">
                 <div className="target-config-strip">
                   <span className="badge badge--muted">目标配置</span>
@@ -726,7 +1196,10 @@ export function ToolsPage({
                           className="form-input mono"
                           value={editEnv[field.key] ?? ""}
                           placeholder={field.placeholder ?? ""}
-                          onChange={(e) => setEditEnv((cur) => ({ ...cur, [field.key]: e.target.value }))}
+                          onChange={(e) => {
+                            setOverlayError("");
+                            setEditEnv((cur) => ({ ...cur, [field.key]: e.target.value }));
+                          }}
                         />
                         {field.secret && (
                           <button
@@ -750,7 +1223,15 @@ export function ToolsPage({
               </div>
             </div>
             <footer className="modal-actions">
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setEditingMcp(undefined)}>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => {
+                  setEditingMcp(undefined);
+                  setOverlayError("");
+                }}
+              >
                 返回
               </button>
               <button
@@ -759,30 +1240,47 @@ export function ToolsPage({
                 disabled={busy || !api}
                 onClick={() => {
                   if (api) {
-                    void run(async () => {
-                      const preview = await api.previewMcp("update", editingMcp.record.id, editingMcp.record.toolId, editEnv);
-                      setEditingMcp(undefined);
-                      setMcpPreview(preview);
-                    });
+                    const target = editingMcp;
+                    void run(
+                      async () => {
+                        const preview = await api.previewMcp(
+                          "update",
+                          target.record.id,
+                          target.record.toolId,
+                          editEnv,
+                          Boolean(target.force),
+                        );
+                        if (mountedRef.current) {
+                          setEditingMcp(undefined);
+                          setMcpPreview({ ...preview, force: target.force });
+                        }
+                      },
+                      { overlay: true },
+                    );
                   }
                 }}
               >
-                查看配置变更
+                {editingMcp.force ? "覆盖修复预览" : "查看配置变更"}
               </button>
             </footer>
           </section>
         </div>
       )}
 
-      {/* 资产更新/卸载预览弹窗 */}
+      {/* 资产更新/卸载/覆盖修复预览弹窗 */}
       {assetPlan && (
         <div className="modal-backdrop">
           <section className="modal preview-modal" role="dialog" aria-modal="true" aria-label="变更预览">
             <header className="modal-header">
               <h2>
-                {ACTION_VERBS[assetPlan.action]}预览 · {TOOL_LABELS[assetPlan.ideId as AssetIde] ?? assetPlan.ideId}
+                {assetPlan.force
+                  ? assetPlan.action === "uninstall"
+                    ? "强制卸载预览"
+                    : "覆盖修复预览"
+                  : `${ACTION_VERBS[assetPlan.action]}预览`}{" "}
+                · {TOOL_LABELS[assetPlan.ideId as AssetIde] ?? assetPlan.ideId}
               </h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setAssetPlan(undefined)}>
+              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={closeAssetPlanModal}>
                 <X size={18} />
               </button>
             </header>
@@ -793,6 +1291,12 @@ export function ToolsPage({
                 </strong>
                 <span>{assetPlan.destination}</span>
               </div>
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               {assetPlan.conflicts.length > 0 && (
                 <div className="issue-box" role="alert">
                   <WarningCircle size={18} style={{ flex: "none" }} />
@@ -805,20 +1309,45 @@ export function ToolsPage({
               )}
               <div className="preview-section">
                 <h3>文件变更 · {assetPlan.changes.length}</h3>
-                <div className="change-list">
-                  {assetPlan.changes.map((file) => (
-                    <div className="change-row" key={file.path}>
-                      <span className={`change-action ${file.action}`}>
-                        {file.action === "add" ? "新增" : file.action === "remove" ? "删除" : "修改"}
-                      </span>
-                      <span>{file.path}</span>
-                    </div>
-                  ))}
-                </div>
+                {assetPlan.changes.length === 0 ? (
+                  <div className="mono-inline">受管文件内容一致，仅刷新本地回执。</div>
+                ) : (
+                  <div className="change-list">
+                    {assetPlan.changes.map((file, index) => (
+                      <button
+                        type="button"
+                        className={`change-row${assetPlanChangeIdx === index ? " active" : ""}`}
+                        key={file.path}
+                        onClick={() => setAssetPlanChangeIdx(index)}
+                      >
+                        <span className={`change-action ${file.action}`}>
+                          {file.action === "add" ? "新增" : file.action === "remove" ? "删除" : "修改"}
+                        </span>
+                        <span>{file.path}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+              {currentPlanChange && (
+                <div className="file-diff">
+                  <pre>{currentPlanChange.before ?? "（原文件不存在）"}</pre>
+                  <pre>{currentPlanChange.after ?? "（将删除）"}</pre>
+                </div>
+              )}
+              {assetPlan.retainedPaths.length > 0 && (
+                <div className="preview-section">
+                  <h3>保留用户文件 · {assetPlan.retainedPaths.length}</h3>
+                  <ul className="retained-list">
+                    {assetPlan.retainedPaths.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
             <footer className="modal-actions">
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setAssetPlan(undefined)}>
+              <button type="button" className="secondary-button" disabled={busy} onClick={closeAssetPlanModal}>
                 返回
               </button>
               <button
@@ -827,16 +1356,32 @@ export function ToolsPage({
                 disabled={busy || assetPlan.conflicts.length > 0 || !api}
                 onClick={() => {
                   if (api) {
-                    void run(async () => {
-                      await api.applyUserAsset(assetPlan.token);
-                      await refreshAll(api);
-                      setAssetPlan(undefined);
-                      setNotice(`${ACTION_VERBS[assetPlan.action]}完成`);
-                    });
+                    const current = assetPlan;
+                    void run(
+                      async () => {
+                        await api.applyUserAsset(current.token);
+                        await refreshAll(api);
+                        if (mountedRef.current) {
+                          setAssetPlan(undefined);
+                          setNotice(
+                            current.force
+                              ? current.action === "uninstall"
+                                ? "强制卸载完成"
+                                : "覆盖修复完成"
+                              : `${ACTION_VERBS[current.action]}完成`,
+                          );
+                        }
+                      },
+                      { overlay: true },
+                    );
                   }
                 }}
               >
-                确认{ACTION_VERBS[assetPlan.action]}
+                {assetPlan.force
+                  ? assetPlan.action === "uninstall"
+                    ? "确认强制卸载"
+                    : "确认覆盖修复"
+                  : `确认${ACTION_VERBS[assetPlan.action]}`}
               </button>
             </footer>
           </section>
@@ -849,9 +1394,15 @@ export function ToolsPage({
           <section className="modal preview-modal" role="dialog" aria-modal="true" aria-label="MCP 变更预览">
             <header className="modal-header">
               <h2>
-                MCP {ACTION_VERBS[mcpPreview.action]}确认 · {TOOL_LABELS[mcpPreview.toolId]}
+                MCP{" "}
+                {mcpPreview.force
+                  ? mcpPreview.action === "uninstall"
+                    ? "强制卸载"
+                    : "覆盖修复"
+                  : ACTION_VERBS[mcpPreview.action]}
+                确认 · {TOOL_LABELS[mcpPreview.toolId]}
               </h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setMcpPreview(undefined)}>
+              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={closeMcpPreviewModal}>
                 <X size={18} />
               </button>
             </header>
@@ -862,6 +1413,12 @@ export function ToolsPage({
                 </strong>
                 <span>{mcpPreview.targetPath} · 敏感字段已脱敏</span>
               </div>
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               {mcpPreview.conflicts.length > 0 && (
                 <div className="issue-box" role="alert">
                   <WarningCircle size={18} style={{ flex: "none" }} />
@@ -887,7 +1444,7 @@ export function ToolsPage({
               </div>
             </div>
             <footer className="modal-actions">
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setMcpPreview(undefined)}>
+              <button type="button" className="secondary-button" disabled={busy} onClick={closeMcpPreviewModal}>
                 返回
               </button>
               <button
@@ -896,16 +1453,32 @@ export function ToolsPage({
                 disabled={busy || mcpPreview.conflicts.length > 0 || !api}
                 onClick={() => {
                   if (api) {
-                    void run(async () => {
-                      await api.applyMcp(mcpPreview.token);
-                      await refreshAll(api);
-                      setMcpPreview(undefined);
-                      setNotice(`MCP ${ACTION_VERBS[mcpPreview.action]}完成`);
-                    });
+                    const current = mcpPreview;
+                    void run(
+                      async () => {
+                        await api.applyMcp(current.token);
+                        await refreshAll(api);
+                        if (mountedRef.current) {
+                          setMcpPreview(undefined);
+                          setNotice(
+                            current.force
+                              ? current.action === "uninstall"
+                                ? "MCP 强制卸载完成"
+                                : "MCP 覆盖修复完成"
+                              : `MCP ${ACTION_VERBS[current.action]}完成`,
+                          );
+                        }
+                      },
+                      { overlay: true },
+                    );
                   }
                 }}
               >
-                确认{ACTION_VERBS[mcpPreview.action]}
+                {mcpPreview.force
+                  ? mcpPreview.action === "uninstall"
+                    ? "确认强制卸载"
+                    : "确认覆盖修复"
+                  : `确认${ACTION_VERBS[mcpPreview.action]}`}
               </button>
             </footer>
           </section>
@@ -920,18 +1493,22 @@ export function SourcesPage({
   sources,
   workspaceSource,
   onSourcesChange,
-  onChooseWorkspaceSource,
+  onWorkspaceSourceChange,
   onOpenAssets,
+  onBusyChange,
 }: {
   api?: DesktopApi;
   sources: AssetSourceRecord[];
   workspaceSource?: WorkspaceSourceInfo;
   onSourcesChange: (next: AssetSourceRecord[]) => void;
-  onChooseWorkspaceSource: () => void;
+  onWorkspaceSourceChange: (next: WorkspaceSourceInfo) => void;
   onOpenAssets: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [imports, setImports] = useState<PluginSource[]>([]);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingSource, setEditingSource] = useState<AssetSourceRecord>();
+  const [confirmRemove, setConfirmRemove] = useState<AssetSourceRecord>();
   const [formId, setFormId] = useState("");
   const [formName, setFormName] = useState("");
   const [formTier, setFormTier] = useState<"enterprise" | "personal">("enterprise");
@@ -939,97 +1516,197 @@ export function SourcesPage({
   const [formLocation, setFormLocation] = useState("");
   const [formBranch, setFormBranch] = useState("main");
   const [formToken, setFormToken] = useState("");
+  const [formClearToken, setFormClearToken] = useState(false);
   const [formRequired, setFormRequired] = useState<string[]>(["common"]);
   const [testResult, setTestResult] = useState<SourceTestResult>();
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [modalError, setModalError] = useState("");
   const [notice, setNotice] = useState("");
+
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      onBusyChange?.(false);
+    };
+  }, [onBusyChange]);
+
+  function setBusyState(next: boolean): void {
+    if (!mountedRef.current) return;
+    setBusy(next);
+    onBusyChange?.(next);
+  }
 
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
     setBusy(true);
-    void Promise.all([api.listPluginImports(), api.listSources()])
-      .then(([records, sourceList]) => {
-        if (cancelled) return;
-        setImports(records);
-        onSourcesChange(sourceList);
-      })
-      .catch((problem) => {
-        if (!cancelled) setError(formatErrorMessage(problem));
+    void Promise.allSettled([api.listPluginImports(), api.listSources()])
+      .then(([importsRes, sourcesRes]) => {
+        if (cancelled || !mountedRef.current) return;
+        const errors: string[] = [];
+        if (importsRes.status === "fulfilled") setImports(importsRes.value);
+        else errors.push(formatErrorMessage(importsRes.reason));
+        if (sourcesRes.status === "fulfilled") onSourcesChange(sourcesRes.value);
+        else errors.push(formatErrorMessage(sourcesRes.reason));
+        if (errors.length > 0) setError(errors.join("；"));
       })
       .finally(() => {
-        if (!cancelled) setBusy(false);
+        if (!cancelled && mountedRef.current) setBusy(false);
       });
     return () => {
       cancelled = true;
     };
   }, [api]);
 
-  async function run(action: () => Promise<void>): Promise<void> {
-    setBusy(true);
-    setError("");
+  async function run(action: () => Promise<void>, options: { modal?: boolean } = {}): Promise<void> {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setBusyState(true);
+    if (options.modal) setModalError("");
+    else setError("");
     setNotice("");
     try {
       await action();
     } catch (problem) {
-      setError(formatErrorMessage(problem));
+      if (!mountedRef.current) return;
+      const msg = formatErrorMessage(problem);
+      if (options.modal) setModalError(msg);
+      else setError(msg);
     } finally {
-      setBusy(false);
+      inFlightRef.current = false;
+      setBusyState(false);
     }
   }
 
+  function closeSourceModal(): void {
+    setShowAdd(false);
+    setEditingSource(undefined);
+    setFormToken("");
+    setFormClearToken(false);
+    setTestResult(undefined);
+    setModalError("");
+  }
+
+  function openAddSourceModal(): void {
+    setEditingSource(undefined);
+    setFormId("");
+    setFormName("");
+    setFormTier("enterprise");
+    setFormAccess("git");
+    setFormLocation("");
+    setFormBranch("main");
+    setFormToken("");
+    setFormClearToken(false);
+    setFormRequired(["common"]);
+    setTestResult(undefined);
+    setModalError("");
+    setShowAdd(true);
+  }
+
+  function openEditSourceModal(src: AssetSourceRecord): void {
+    setEditingSource(src);
+    setFormId(src.id);
+    setFormName(src.name);
+    setFormTier(src.tier === "enterprise" ? "enterprise" : "personal");
+    setFormAccess(src.access === "local" ? "local" : "git");
+    setFormLocation(src.location);
+    setFormBranch(src.branch ?? "");
+    setFormToken("");
+    setFormClearToken(false);
+    setFormRequired([...src.requiredRulepacks]);
+    setTestResult(undefined);
+    setModalError("");
+    setShowAdd(true);
+  }
+
   function toggleRequiredPack(packId: string): void {
+    setModalError("");
     setFormRequired((current) =>
       current.includes(packId) ? current.filter((item) => item !== packId) : [...current, packId],
     );
+  }
+
+  async function handleChooseTempWorkspace(): Promise<void> {
+    if (!api) return;
+    await run(async () => {
+      const selected = await api.chooseWorkspaceSource();
+      if (selected && mountedRef.current) {
+        onWorkspaceSourceChange(selected);
+        setNotice(`已加载临时本地规则源（${selected.packs.length} 个规则包）`);
+      }
+    });
   }
 
   async function handleExport(key: string): Promise<void> {
     if (!api) return;
     await run(async () => {
       const result = await api.exportTraeWorkSkill(key);
-      if (result) setNotice(`已导出：${result.path}`);
+      if (result && mountedRef.current) setNotice(`已导出：${result.path}`);
     });
   }
 
   async function handleTestForm(): Promise<void> {
     if (!api) return;
     setTestResult(undefined);
-    await run(async () => {
-      const result = await api.testSource({
-        access: formAccess,
-        location: formLocation.trim(),
-        branch: formAccess === "git" ? formBranch.trim() || undefined : undefined,
-        token: formAccess === "git" ? formToken.trim() || undefined : undefined,
-      });
-      setTestResult(result);
-    });
+    await run(
+      async () => {
+        const result = await api.testSource({
+          id: editingSource?.id,
+          access: formAccess,
+          location: formLocation.trim(),
+          branch: formAccess === "git" ? formBranch.trim() || undefined : undefined,
+          token: formAccess === "git" && !formClearToken ? formToken.trim() || undefined : undefined,
+        });
+        if (mountedRef.current) setTestResult(result);
+      },
+      { modal: true },
+    );
   }
 
-  async function handleSubmitAdd(): Promise<void> {
+  async function handleSubmitSource(): Promise<void> {
     if (!api) return;
-    await run(async () => {
-      const next = await api.addSource({
-        id: formId.trim(),
-        name: formName.trim(),
-        tier: formTier,
-        access: formAccess,
-        location: formLocation.trim(),
-        branch: formAccess === "git" ? formBranch.trim() || undefined : undefined,
-        token: formAccess === "git" ? formToken.trim() || undefined : undefined,
-        requiredRulepacks: formTier === "enterprise" ? formRequired : [],
-      });
-      onSourcesChange(next);
-      setShowAdd(false);
-      setFormId("");
-      setFormName("");
-      setFormLocation("");
-      setFormToken("");
-      setTestResult(undefined);
-      setNotice("来源已添加");
-    });
+    await run(
+      async () => {
+        if (editingSource && api.updateSource) {
+          const next = await api.updateSource({
+            id: editingSource.id,
+            name: formName.trim(),
+            branch: formAccess === "git" ? formBranch.trim() : undefined,
+            token: formAccess === "git" && !formClearToken ? formToken.trim() || undefined : undefined,
+            clearToken: formClearToken,
+            requiredRulepacks: formTier === "enterprise" ? formRequired : [],
+          });
+          onSourcesChange(next);
+          if (mountedRef.current) {
+            closeSourceModal();
+            setNotice("来源已更新");
+          }
+          return;
+        }
+        const next = await api.addSource({
+          id: formId.trim(),
+          name: formName.trim(),
+          tier: formTier,
+          access: formAccess,
+          location: formLocation.trim(),
+          branch: formAccess === "git" ? formBranch.trim() || undefined : undefined,
+          token: formAccess === "git" ? formToken.trim() || undefined : undefined,
+          requiredRulepacks: formTier === "enterprise" ? formRequired : [],
+        });
+        onSourcesChange(next);
+        if (mountedRef.current) {
+          closeSourceModal();
+          setNotice("来源已添加");
+        }
+      },
+      { modal: true },
+    );
   }
 
   const tierLabel = { enterprise: "企业源", personal: "个人源", official: "官方源" } as const;
@@ -1047,7 +1724,7 @@ export function SourcesPage({
           <button
             type="button"
             className="secondary-button"
-            onClick={onChooseWorkspaceSource}
+            onClick={() => void handleChooseTempWorkspace()}
             disabled={busy || !api}
           >
             <FolderOpen size={15} aria-hidden="true" />
@@ -1056,10 +1733,7 @@ export function SourcesPage({
           <button
             type="button"
             className="primary-button"
-            onClick={() => {
-              setTestResult(undefined);
-              setShowAdd(true);
-            }}
+            onClick={openAddSourceModal}
             disabled={busy || !api}
           >
             <Plus size={15} aria-hidden="true" />
@@ -1115,7 +1789,7 @@ export function SourcesPage({
                         location: src.location,
                         branch: src.branch,
                       });
-                      setNotice(`${src.name}：${result.message}`);
+                      if (mountedRef.current) setNotice(`${src.name}：${result.message}`);
                     });
                   }
                 }}
@@ -1131,7 +1805,7 @@ export function SourcesPage({
                     void run(async () => {
                       const result = await api.syncSource(src.id);
                       onSourcesChange(result.sources);
-                      setNotice(result.message);
+                      if (mountedRef.current) setNotice(result.message);
                     });
                   }
                 }}
@@ -1139,6 +1813,17 @@ export function SourcesPage({
                 <ArrowClockwise size={14} aria-hidden="true" />
                 同步
               </button>
+              {!src.readonly && api?.updateSource && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => openEditSourceModal(src)}
+                >
+                  <PencilSimple size={14} aria-hidden="true" />
+                  编辑
+                </button>
+              )}
               {!src.readonly && (
                 <button
                   type="button"
@@ -1146,13 +1831,8 @@ export function SourcesPage({
                   aria-label={`移除 ${src.name}`}
                   disabled={busy || !api}
                   onClick={() => {
-                    if (api) {
-                      void run(async () => {
-                        const next = await api.removeSource(src.id);
-                        onSourcesChange(next);
-                        setNotice(`已移除来源：${src.name}`);
-                      });
-                    }
+                    setModalError("");
+                    setConfirmRemove(src);
                   }}
                 >
                   <Trash size={14} aria-hidden="true" />
@@ -1226,54 +1906,191 @@ export function SourcesPage({
         </div>
       )}
 
-      {/* 05-B · 添加来源弹窗 */}
-      {showAdd && (
+      {/* 移除来源二次确认弹窗 */}
+      {confirmRemove && (
         <div className="modal-backdrop">
-          <section className="modal preview-modal" role="dialog" aria-modal="true" aria-label="添加来源">
+          <section className="modal" role="dialog" aria-modal="true" aria-label="确认移除来源">
             <header className="modal-header">
-              <h2>添加来源</h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setShowAdd(false)}>
+              <h2>移除来源</h2>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="关闭"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmRemove(undefined);
+                  setModalError("");
+                }}
+              >
                 <X size={18} />
               </button>
             </header>
             <div className="modal-body">
-              <div className="drawer-section">
-                <div className="form-field">
-                  <span className="form-label-row"><span>来源级别</span></span>
-                  <div className="segmented">
-                    <button type="button" className={formTier === "enterprise" ? "active" : ""} onClick={() => setFormTier("enterprise")}>
-                      企业源（支持必选规范）
-                    </button>
-                    <button type="button" className={formTier === "personal" ? "active" : ""} onClick={() => setFormTier("personal")}>
-                      个人源
-                    </button>
-                  </div>
+              {modalError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{modalError}</span>
                 </div>
+              )}
+              <div className="preview-meta">
+                <strong>{confirmRemove.name}</strong>
+                <span>{confirmRemove.location}</span>
+              </div>
+              <p className="mono-inline" style={{ marginTop: 10 }}>
+                {confirmRemove.access === "git"
+                  ? "移除后将清理本机同步缓存与已存凭据；若已有项目指向该缓存路径，后续更新需重新绑定来源。"
+                  : "移除仅解除智枢来源登记，不会删除你的本地目录文件。"}
+              </p>
+            </div>
+            <footer className="modal-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmRemove(undefined);
+                  setModalError("");
+                }}
+              >
+                返回
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={busy || !api}
+                onClick={() => {
+                  if (!api) return;
+                  const target = confirmRemove;
+                  void run(
+                    async () => {
+                      const next = await api.removeSource(target.id);
+                      onSourcesChange(next);
+                      if (mountedRef.current) {
+                        setConfirmRemove(undefined);
+                        setNotice(`已移除来源：${target.name}`);
+                      }
+                    },
+                    { modal: true },
+                  );
+                }}
+              >
+                确认移除
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {/* 05-B · 添加 / 编辑来源弹窗 */}
+      {showAdd && (
+        <div className="modal-backdrop">
+          <section
+            className="modal preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editingSource ? "编辑来源" : "添加来源"}
+          >
+            <header className="modal-header">
+              <h2>{editingSource ? `编辑来源 · ${editingSource.id}` : "添加来源"}</h2>
+              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={closeSourceModal}>
+                <X size={18} />
+              </button>
+            </header>
+            <div className="modal-body">
+              {modalError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{modalError}</span>
+                </div>
+              )}
+              <div className="drawer-section">
+                {!editingSource && (
+                  <div className="form-field">
+                    <span className="form-label-row"><span>来源级别</span></span>
+                    <div className="segmented">
+                      <button
+                        type="button"
+                        className={formTier === "enterprise" ? "active" : ""}
+                        onClick={() => {
+                          setFormTier("enterprise");
+                          setModalError("");
+                        }}
+                      >
+                        企业源（支持必选规范）
+                      </button>
+                      <button
+                        type="button"
+                        className={formTier === "personal" ? "active" : ""}
+                        onClick={() => {
+                          setFormTier("personal");
+                          setModalError("");
+                        }}
+                      >
+                        个人源
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <label className="form-field">
                   <span className="form-label-row">
                     <span>来源标识 ID *</span>
-                    <span className="mono-inline">a-z / 0-9 / -</span>
+                    <span className="mono-inline">{editingSource ? "编辑时不可变更" : "a-z / 0-9 / -"}</span>
                   </span>
-                  <input className="form-input mono" value={formId} onChange={(e) => setFormId(e.target.value)} placeholder="corp-xr-rules" />
+                  <input
+                    className="form-input mono"
+                    value={formId}
+                    disabled={Boolean(editingSource)}
+                    onChange={(e) => {
+                      setFormId(e.target.value);
+                      setModalError("");
+                    }}
+                    placeholder="corp-xr-rules"
+                  />
                 </label>
 
                 <label className="form-field">
                   <span className="form-label-row"><span>来源名称 *</span></span>
-                  <input className="form-input" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="企业 XR 产研规范源" />
+                  <input
+                    className="form-input"
+                    value={formName}
+                    onChange={(e) => {
+                      setFormName(e.target.value);
+                      setModalError("");
+                    }}
+                    placeholder="企业 XR 产研规范源"
+                  />
                 </label>
 
-                <div className="form-field">
-                  <span className="form-label-row"><span>接入方式</span></span>
-                  <div className="segmented">
-                    <button type="button" className={formAccess === "git" ? "active" : ""} onClick={() => setFormAccess("git")}>
-                      私有 Git 仓库
-                    </button>
-                    <button type="button" className={formAccess === "local" ? "active" : ""} onClick={() => setFormAccess("local")}>
-                      本地目录
-                    </button>
+                {!editingSource && (
+                  <div className="form-field">
+                    <span className="form-label-row"><span>接入方式</span></span>
+                    <div className="segmented">
+                      <button
+                        type="button"
+                        className={formAccess === "git" ? "active" : ""}
+                        onClick={() => {
+                          setFormAccess("git");
+                          setTestResult(undefined);
+                          setModalError("");
+                        }}
+                      >
+                        私有 Git 仓库
+                      </button>
+                      <button
+                        type="button"
+                        className={formAccess === "local" ? "active" : ""}
+                        onClick={() => {
+                          setFormAccess("local");
+                          setTestResult(undefined);
+                          setModalError("");
+                        }}
+                      >
+                        本地目录
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="form-field">
                   <span className="form-label-row">
@@ -1284,20 +2101,31 @@ export function SourcesPage({
                       className="form-input mono"
                       style={{ flex: 1 }}
                       value={formLocation}
-                      onChange={(e) => setFormLocation(e.target.value)}
+                      disabled={Boolean(editingSource)}
+                      onChange={(e) => {
+                        setFormLocation(e.target.value);
+                        setTestResult(undefined);
+                        setModalError("");
+                      }}
                       placeholder={formAccess === "git" ? "https://git.corp.example/org/zhishu-rules.git" : "/path/to/rules-repo"}
                     />
-                    {formAccess === "local" && (
+                    {formAccess === "local" && !editingSource && (
                       <button
                         type="button"
                         className="secondary-button"
                         disabled={busy || !api}
                         onClick={() => {
                           if (api) {
-                            void run(async () => {
-                              const picked = await api.chooseSourceDir();
-                              if (picked) setFormLocation(picked);
-                            });
+                            void run(
+                              async () => {
+                                const picked = await api.chooseSourceDir();
+                                if (picked && mountedRef.current) {
+                                  setFormLocation(picked);
+                                  setTestResult(undefined);
+                                }
+                              },
+                              { modal: true },
+                            );
                           }
                         }}
                       >
@@ -1311,7 +2139,16 @@ export function SourcesPage({
                   <>
                     <label className="form-field">
                       <span className="form-label-row"><span>分支</span></span>
-                      <input className="form-input mono" value={formBranch} onChange={(e) => setFormBranch(e.target.value)} placeholder="main" />
+                      <input
+                        className="form-input mono"
+                        value={formBranch}
+                        onChange={(e) => {
+                          setFormBranch(e.target.value);
+                          setTestResult(undefined);
+                          setModalError("");
+                        }}
+                        placeholder="main"
+                      />
                     </label>
                     <label className="form-field">
                       <span className="form-label-row">
@@ -1324,11 +2161,34 @@ export function SourcesPage({
                       <input
                         type="password"
                         className="form-input mono"
+                        disabled={formClearToken}
                         value={formToken}
-                        onChange={(e) => setFormToken(e.target.value)}
-                        placeholder="留空则使用本机 SSH 或系统 Git 凭据"
+                        onChange={(e) => {
+                          setFormToken(e.target.value);
+                          setTestResult(undefined);
+                          setModalError("");
+                        }}
+                        placeholder={
+                          editingSource?.hasLocalToken
+                            ? `留空保留当前凭据（${editingSource.maskedToken ?? "••••"}）`
+                            : "留空则使用本机 SSH 或系统 Git 凭据"
+                        }
                       />
                     </label>
+                    {editingSource?.hasLocalToken && (
+                      <label className="asset-card-meta">
+                        <input
+                          type="checkbox"
+                          checked={formClearToken}
+                          onChange={(e) => {
+                            setFormClearToken(e.target.checked);
+                            if (e.target.checked) setFormToken("");
+                            setTestResult(undefined);
+                          }}
+                        />
+                        <span>清除已保存的本机访问令牌</span>
+                      </label>
+                    )}
                   </>
                 )}
 
@@ -1379,16 +2239,16 @@ export function SourcesPage({
               >
                 测试连接
               </button>
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setShowAdd(false)}>
+              <button type="button" className="secondary-button" disabled={busy} onClick={closeSourceModal}>
                 返回
               </button>
               <button
                 type="button"
                 className="primary-button"
                 disabled={busy || !formId.trim() || !formName.trim() || !formLocation.trim()}
-                onClick={() => void handleSubmitAdd()}
+                onClick={() => void handleSubmitSource()}
               >
-                确认添加
+                {editingSource ? "保存修改" : "确认添加"}
               </button>
             </footer>
           </section>

@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { access } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { assetFileHashes, readAssetFiles, type UserAssetReceipt } from "../../packages/core/src/user-assets.ts";
@@ -78,13 +79,29 @@ export function codexMcpConfigPath(codexHome: string): string {
 }
 
 export async function findCodexCli(): Promise<string | undefined> {
-  const directories = String(process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const home = os.homedir();
+  const extraDirs =
+    process.platform === "win32"
+      ? [
+          path.join(process.env.APPDATA ?? path.join(home, "AppData/Roaming"), "npm"),
+          path.join(process.env.LOCALAPPDATA ?? path.join(home, "AppData/Local"), "Volta/bin"),
+        ]
+      : [
+          "/opt/homebrew/bin",
+          "/usr/local/bin",
+          path.join(home, ".local/bin"),
+          path.join(home, ".npm-global/bin"),
+          path.join(home, ".volta/bin"),
+          path.join(home, ".asdf/shims"),
+          path.join(home, ".fnm/current/bin"),
+        ];
+  const directories = [...new Set([...String(process.env.PATH ?? "").split(path.delimiter).filter(Boolean), ...extraDirs])];
   const executable = process.platform === "win32" ? "codex.exe" : "codex";
   const nativePackage = `codex-${process.platform}-${process.arch}`;
   const triple = process.platform === "win32" ? `${process.arch === "arm64" ? "aarch64" : "x86_64"}-pc-windows-msvc`
     : process.platform === "darwin" ? `${process.arch === "arm64" ? "aarch64" : "x86_64"}-apple-darwin`
     : `${process.arch === "arm64" ? "aarch64" : "x86_64"}-unknown-linux-musl`;
-  const candidates = [
+  const candidates = [...new Set([
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
     ...directories.map((directory) => path.join(directory, executable)),
@@ -93,7 +110,7 @@ export async function findCodexCli(): Promise<string | undefined> {
       path.join(modules, "@openai/codex/node_modules/@openai", nativePackage, "vendor", triple, "bin", executable),
       path.join(modules, "@openai/codex/vendor", triple, "bin", executable),
     ])),
-  ];
+  ])];
   for (const file of candidates) {
     try {
       await access(file);
@@ -119,6 +136,8 @@ export async function discoverCodexSkills(binary: string, userHome: string, code
     const lines = createInterface({ input: child.stdout }); let finished = false; let received = 0;
     const finish = (error?: Error, result: { name: string; path: string; scope: string; enabled: boolean }[] = []) => {
       if (finished) return; finished = true; clearTimeout(timer); lines.close(); child.stdin.end(); child.kill();
+      const killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* 进程已退出 */ } }, 1500);
+      killTimer.unref();
       if (error) reject(error); else resolve(result);
     };
     const timer = setTimeout(() => finish(new Error("读取 Codex 技能列表超时")), 15000);

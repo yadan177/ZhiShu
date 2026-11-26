@@ -60,6 +60,20 @@ export function assertValidGitLocation(location: string): void {
   if (!isHttps && !isSsh && !isLocalFile) {
     throw new Error("Git 仓库地址必须使用 HTTPS、SSH 或绝对路径");
   }
+  if (isHttps || trimmed.startsWith("ssh://")) {
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new Error("Git 仓库地址不是合法 URL");
+    }
+    if (isHttps && (parsed.username || parsed.password)) {
+      throw new Error("Git HTTPS 地址禁止内嵌明文账号或密码，请使用独立访问令牌字段");
+    }
+    if (trimmed.startsWith("ssh://") && parsed.password) {
+      throw new Error("Git SSH 地址禁止内嵌明文密码");
+    }
+  }
 }
 
 export function assertAssetSourceRecord(value: unknown): asserts value is AssetSourceRecord {

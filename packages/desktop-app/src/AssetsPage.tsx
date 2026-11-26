@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   CheckCircle,
   FolderPlus,
   MagnifyingGlass,
+  PencilSimple,
   Plus,
   ShieldCheck,
   Trash,
@@ -42,6 +43,31 @@ const TOOL_LABELS: Record<AssetIde, string> = {
 
 const ACTION_VERBS = { install: "安装", update: "更新", uninstall: "卸载" } as const;
 
+function compareSemver(a: string, b: string): number {
+  const splitVer = (value: string): [string, string | undefined] => {
+    const idx = value.indexOf("-");
+    return idx === -1 ? [value, undefined] : [value.slice(0, idx), value.slice(idx + 1)];
+  };
+  const [aCore, aPre] = splitVer(a);
+  const [bCore, bPre] = splitVer(b);
+  const aParts = aCore.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const bParts = bCore.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const diff = (aParts[i] ?? 0) - (bParts[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  if (!aPre && bPre) return 1;
+  if (aPre && !bPre) return -1;
+  if (aPre && bPre) return aPre.localeCompare(bPre);
+  return 0;
+}
+
+function normalizeDigest(digest?: string): string | undefined {
+  if (!digest) return undefined;
+  const cleaned = digest.replace(/^sha256:/i, "");
+  return /^[a-f0-9]{64}$/i.test(cleaned) ? cleaned.toLowerCase() : undefined;
+}
+
 function glyphForPlugin(name: string, kind: "skill" | "capability-plugin"): AssetGlyphKind {
   return glyphForAsset(name, kind);
 }
@@ -50,7 +76,13 @@ function glyphForMcp(id: string): AssetGlyphKind {
   return id === "feishu-mcp" ? "feishu" : "local_plugin";
 }
 
-export function AssetsPage({ api }: { api?: AssetsApi }) {
+export function AssetsPage({
+  api,
+  onBusyChange,
+}: {
+  api?: AssetsApi;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const [tab, setTab] = useState<AssetTab>("plugins");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -69,6 +101,7 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
   const [drawerAssetTools, setDrawerAssetTools] = useState<AssetIde[]>(["antigravity"]);
   const [drawerMcpTool, setDrawerMcpTool] = useState<McpToolId>("antigravity");
   const [mcpEnvValues, setMcpEnvValues] = useState<Record<string, string>>({});
+  const [revealedMcpKeys, setRevealedMcpKeys] = useState<Record<string, boolean>>({});
 
   const [assetPlanQueue, setAssetPlanQueue] = useState<{
     key: string;
@@ -76,11 +109,14 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
     completedTools: AssetIde[];
     remainingTools: AssetIde[];
     currentPlan: UserAssetPlan;
+    existingId?: string;
+    force?: boolean;
   }>();
   const [selectedChangeIndex, setSelectedChangeIndex] = useState(0);
-  const [mcpPreview, setMcpPreview] = useState<McpPreview>();
+  const [mcpPreview, setMcpPreview] = useState<McpPreview & { force?: boolean }>();
 
   const [showAddMcp, setShowAddMcp] = useState(false);
+  const [editingCustomMcpId, setEditingCustomMcpId] = useState<string>();
   const [customId, setCustomId] = useState("");
   const [customTitle, setCustomTitle] = useState("");
   const [customVersion, setCustomVersion] = useState("1.0.0");
@@ -93,34 +129,92 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [overlayError, setOverlayError] = useState("");
   const [notice, setNotice] = useState("");
 
-  async function run(action: () => Promise<void>): Promise<void> {
-    setBusy(true);
-    setError("");
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      onBusyChange?.(false);
+    };
+  }, [onBusyChange]);
+
+  function setBusyState(next: boolean): void {
+    if (!mountedRef.current) return;
+    setBusy(next);
+    onBusyChange?.(next);
+  }
+
+  async function run(
+    action: () => Promise<void>,
+    options: { overlay?: boolean } = {},
+  ): Promise<void> {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setBusyState(true);
+    if (options.overlay) setOverlayError("");
+    else setError("");
     setNotice("");
     try {
       await action();
     } catch (problem) {
-      setError(formatErrorMessage(problem));
+      if (!mountedRef.current) return;
+      const msg = formatErrorMessage(problem);
+      if (options.overlay) setOverlayError(msg);
+      else setError(msg);
     } finally {
-      setBusy(false);
+      inFlightRef.current = false;
+      setBusyState(false);
     }
   }
 
   async function refreshAll(currentApi: AssetsApi): Promise<void> {
-    const [imports, assets, catalog, mcps, toolList] = await Promise.all([
+    if (currentApi.getToolsSnapshot) {
+      const [importsRes, catalogRes, snapshotRes] = await Promise.allSettled([
+        currentApi.listPluginImports(),
+        currentApi.listMcpCatalog(),
+        currentApi.getToolsSnapshot(),
+      ]);
+      if (!mountedRef.current) return;
+      const errors: string[] = [];
+      if (importsRes.status === "fulfilled") setSources(importsRes.value);
+      else errors.push(formatErrorMessage(importsRes.reason));
+      if (catalogRes.status === "fulfilled") setMcpCatalog(catalogRes.value);
+      else errors.push(formatErrorMessage(catalogRes.reason));
+      if (snapshotRes.status === "fulfilled") {
+        setTools(snapshotRes.value.tools);
+        setInstalledAssets(snapshotRes.value.assets);
+        setInstalledMcps(snapshotRes.value.mcps);
+      } else {
+        errors.push(formatErrorMessage(snapshotRes.reason));
+      }
+      if (errors.length > 0) setError(errors.join("；"));
+      return;
+    }
+    const [importsRes, assetsRes, catalogRes, mcpsRes, toolsRes] = await Promise.allSettled([
       currentApi.listPluginImports(),
       currentApi.listUserAssets(),
       currentApi.listMcpCatalog(),
       currentApi.listInstalledMcps(),
       currentApi.inspectTools(),
     ]);
-    setSources(imports);
-    setInstalledAssets(assets);
-    setMcpCatalog(catalog);
-    setInstalledMcps(mcps);
-    setTools(toolList);
+    if (!mountedRef.current) return;
+    const errors: string[] = [];
+    if (importsRes.status === "fulfilled") setSources(importsRes.value);
+    else errors.push(formatErrorMessage(importsRes.reason));
+    if (assetsRes.status === "fulfilled") setInstalledAssets(assetsRes.value);
+    else errors.push(formatErrorMessage(assetsRes.reason));
+    if (catalogRes.status === "fulfilled") setMcpCatalog(catalogRes.value);
+    else errors.push(formatErrorMessage(catalogRes.reason));
+    if (mcpsRes.status === "fulfilled") setInstalledMcps(mcpsRes.value);
+    else errors.push(formatErrorMessage(mcpsRes.reason));
+    if (toolsRes.status === "fulfilled") setTools(toolsRes.value);
+    else errors.push(formatErrorMessage(toolsRes.reason));
+    if (errors.length > 0) setError(errors.join("；"));
   }
 
   useEffect(() => {
@@ -130,23 +224,11 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
     setError("");
     void (async () => {
       try {
-        const [imports, assets, catalog, mcps, toolList] = await Promise.all([
-          api.listPluginImports(),
-          api.listUserAssets(),
-          api.listMcpCatalog(),
-          api.listInstalledMcps(),
-          api.inspectTools(),
-        ]);
-        if (cancelled) return;
-        setSources(imports);
-        setInstalledAssets(assets);
-        setMcpCatalog(catalog);
-        setInstalledMcps(mcps);
-        setTools(toolList);
+        await refreshAll(api);
       } catch (problem) {
-        if (!cancelled) setError(formatErrorMessage(problem));
+        if (!cancelled && mountedRef.current) setError(formatErrorMessage(problem));
       } finally {
-        if (!cancelled) setBusy(false);
+        if (!cancelled && mountedRef.current) setBusy(false);
       }
     })();
     return () => {
@@ -168,6 +250,20 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
     return installedAssets.filter(
       (record) => record.id === expectedPrefix || record.sourceKey === item.key,
     );
+  }
+
+  function assessAssetRecord(
+    item: PluginSource,
+    rec: InstalledAssetRecord,
+  ): "conflict" | "updatable" | "different-version" | "current" {
+    if (rec.issues.length > 0) return "conflict";
+    const cmp = compareSemver(item.version, rec.version);
+    if (cmp > 0) return "updatable";
+    if (cmp < 0) return "different-version";
+    const itemDigest = normalizeDigest(item.sourceDigest);
+    const recDigest = normalizeDigest(rec.sourceDigest);
+    if (itemDigest && recDigest && itemDigest !== recDigest) return "updatable";
+    return "current";
   }
 
   function installedForMcp(server: McpServerDefinition): InstalledMcpRecord[] {
@@ -218,12 +314,26 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
   function openAssetDrawer(item: PluginSource): void {
     setDrawerMcp(undefined);
     setSkillPreview(undefined);
+    setOverlayError("");
     setDrawerAsset(item);
     const compatible = (["antigravity", "codex", "traework", "generic"] as AssetIde[]).filter(
       (ide) => assetCompatibility(item, ide).supported,
     );
-    const defaultPick = compatible.find((ide) => !installedForSource(item).some((rec) => rec.target.ideId === ide)) ?? compatible[0];
-    setDrawerAssetTools(defaultPick ? [defaultPick] : []);
+    const existing = installedForSource(item);
+    const preferred =
+      compatible.find((ide) => {
+        const rec = existing.find((r) => r.target.ideId === ide);
+        if (!rec) {
+          if (item.kind === "skill" && (ide === "codex" || ide === "generic")) {
+            const sibling = ide === "codex" ? "generic" : "codex";
+            if (existing.some((r) => r.target.ideId === sibling)) return false;
+          }
+          return true;
+        }
+        const state = assessAssetRecord(item, rec);
+        return state === "conflict" || state === "updatable";
+      }) ?? compatible[0];
+    setDrawerAssetTools(preferred ? [preferred] : []);
   }
 
   async function toggleSkillPreview(item: PluginSource, skillSlug: string): Promise<void> {
@@ -233,112 +343,250 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
     }
     const readPluginSkill = api?.readPluginSkill;
     if (!readPluginSkill) return;
-    await run(async () => {
-      const loaded = await readPluginSkill(item.key, skillSlug);
-      setSkillPreview(loaded);
-    });
+    await run(
+      async () => {
+        const loaded = await readPluginSkill(item.key, skillSlug);
+        if (mountedRef.current) setSkillPreview(loaded);
+      },
+      { overlay: true },
+    );
   }
 
   function openMcpDrawer(server: McpServerDefinition): void {
     setDrawerAsset(undefined);
+    setOverlayError("");
     setDrawerMcp(server);
-    setDrawerMcpTool("antigravity");
+    const availableTool = (["antigravity", "codex"] as McpToolId[]).find((id) =>
+      tools.some((t) => t.id === id && t.available),
+    );
+    const existingTool = installedForMcp(server)[0]?.toolId;
+    setDrawerMcpTool(existingTool ?? availableTool ?? "antigravity");
     setMcpEnvValues(Object.fromEntries(server.envSchema.map((field) => [field.key, ""])));
+    setRevealedMcpKeys({});
+  }
+
+  function openCustomMcpModal(editDef?: McpServerDefinition): void {
+    setOverlayError("");
+    if (editDef) {
+      setEditingCustomMcpId(editDef.id);
+      setCustomId(editDef.id);
+      setCustomTitle(editDef.title);
+      setCustomVersion(editDef.version);
+      setCustomTransport(editDef.transport);
+      setCustomCommand(editDef.command ?? "npx");
+      setCustomArgs((editDef.args ?? []).join(" "));
+      setCustomUrl(editDef.url ?? "");
+      setCustomEnvKeys(editDef.envSchema.map((f) => f.key).join(", "));
+      setCustomEnvSecret(editDef.envSchema.some((f) => f.secret !== false) || editDef.envSchema.length === 0);
+    } else {
+      setEditingCustomMcpId(undefined);
+      setCustomId("");
+      setCustomTitle("");
+      setCustomVersion("1.0.0");
+      setCustomTransport("stdio");
+      setCustomCommand("npx");
+      setCustomArgs("");
+      setCustomUrl("");
+      setCustomEnvKeys("");
+      setCustomEnvSecret(true);
+    }
+    setShowAddMcp(true);
   }
 
   function toggleDrawerAssetTool(ide: AssetIde): void {
-    setDrawerAssetTools((current) =>
-      current.includes(ide) ? current.filter((item) => item !== ide) : [...current, ide],
-    );
+    setOverlayError("");
+    setDrawerAssetTools((current) => {
+      if (current.includes(ide)) return current.filter((item) => item !== ide);
+      // 独立 Skill 的 Codex 与通用目录共用 ~/.agents/skills，避免同批重复选中引发路径碰撞
+      if (drawerAsset?.kind === "skill" && (ide === "codex" || ide === "generic")) {
+        const sibling: AssetIde = ide === "codex" ? "generic" : "codex";
+        return [...current.filter((item) => item !== sibling), ide];
+      }
+      return [...current, ide];
+    });
   }
 
-  async function startAssetPreviewBatch(): Promise<void> {
+  function closeAssetPlanModal(): void {
+    setAssetPlanQueue(undefined);
+    setOverlayError("");
+    void api?.clearUserAssetPreview?.().catch(() => {});
+  }
+
+  function closeMcpPreviewModal(): void {
+    setMcpPreview(undefined);
+    setOverlayError("");
+    void api?.clearMcpPreview?.().catch(() => {});
+  }
+
+  async function startAssetPreviewBatch(force = false): Promise<void> {
     if (!api || !drawerAsset || drawerAssetTools.length === 0) return;
     const [firstTool, ...restTools] = drawerAssetTools;
     if (!firstTool) return;
     const existing = installedForSource(drawerAsset).find((rec) => rec.target.ideId === firstTool);
     const action = existing ? "update" : "install";
-    await run(async () => {
-      const plan = await api.previewUserAsset(action, drawerAsset.key, firstTool, existing?.id);
+    const useForce = force || Boolean(existing && existing.issues.length > 0);
+    await run(
+      async () => {
+        const plan = await api.previewUserAsset(action, drawerAsset.key, firstTool, existing?.id, useForce);
+        if (!mountedRef.current) return;
+        setSelectedChangeIndex(0);
+        setAssetPlanQueue({
+          key: drawerAsset.key,
+          totalTools: drawerAssetTools.length,
+          completedTools: [],
+          remainingTools: restTools,
+          currentPlan: plan,
+          existingId: existing?.id,
+          force: useForce,
+        });
+      },
+      { overlay: true },
+    );
+  }
+
+  async function previewNextInQueue(
+    currentApi: AssetsApi,
+    key: string,
+    totalTools: number,
+    completedTools: AssetIde[],
+    remainingTools: AssetIde[],
+  ): Promise<void> {
+    const [nextTool, ...nextRest] = remainingTools;
+    if (!nextTool || !drawerAsset || !mountedRef.current) {
+      setAssetPlanQueue(undefined);
+      setDrawerAsset(undefined);
+      setNotice(
+        completedTools.length > 0
+          ? `已完成：${completedTools.map((id) => TOOL_LABELS[id]).join("、")}`
+          : "已结束操作",
+      );
+      return;
+    }
+    try {
+      const refreshedInstalled = await currentApi.listUserAssets();
+      if (!mountedRef.current) return;
+      const expectedId = `${drawerAsset.kind === "skill" ? "skill" : "plugin"}-${drawerAsset.name}`;
+      const existing = refreshedInstalled.find(
+        (rec) => rec.target.ideId === nextTool && (rec.id === expectedId || rec.sourceKey === key),
+      );
+      const useForce = Boolean(existing && existing.issues.length > 0);
+      const nextPlan = await currentApi.previewUserAsset(
+        existing ? "update" : "install",
+        key,
+        nextTool,
+        existing?.id,
+        useForce,
+      );
+      if (!mountedRef.current) return;
       setSelectedChangeIndex(0);
       setAssetPlanQueue({
-        key: drawerAsset.key,
-        totalTools: drawerAssetTools.length,
-        completedTools: [],
-        remainingTools: restTools,
-        currentPlan: plan,
+        key,
+        totalTools,
+        completedTools,
+        remainingTools: nextRest,
+        currentPlan: nextPlan,
+        existingId: existing?.id,
+        force: useForce,
       });
-    });
+    } catch (nextErr) {
+      if (!mountedRef.current) return;
+      setAssetPlanQueue(undefined);
+      setDrawerAsset(undefined);
+      const doneText = completedTools.length > 0 ? `已写入 ${completedTools.map((id) => TOOL_LABELS[id]).join("、")}；` : "";
+      setError(`${doneText}${TOOL_LABELS[nextTool]} 预览失败（${formatErrorMessage(nextErr)}）`);
+    }
   }
 
   async function applyCurrentAssetPlan(): Promise<void> {
     if (!api || !assetPlanQueue) return;
     const { key, totalTools, completedTools, remainingTools, currentPlan } = assetPlanQueue;
-    await run(async () => {
-      await api.applyUserAsset(currentPlan.token);
-      const nextCompleted = [...completedTools, currentPlan.ideId as AssetIde];
-      await refreshAll(api);
-      if (remainingTools.length > 0 && drawerAsset) {
-        const [nextTool, ...nextRest] = remainingTools;
-        if (nextTool) {
-          try {
-            const refreshedInstalled = await api.listUserAssets();
-            const expectedId = `${drawerAsset.kind === "skill" ? "skill" : "plugin"}-${drawerAsset.name}`;
-            const existing = refreshedInstalled.find((rec) => rec.target.ideId === nextTool && (rec.id === expectedId || rec.sourceKey === key));
-            const nextPlan = await api.previewUserAsset(existing ? "update" : "install", key, nextTool, existing?.id);
-            setSelectedChangeIndex(0);
-            setAssetPlanQueue({
-              key,
-              totalTools,
-              completedTools: nextCompleted,
-              remainingTools: nextRest,
-              currentPlan: nextPlan,
-            });
-            return;
-          } catch (nextErr) {
-            setAssetPlanQueue(undefined);
-            setDrawerAsset(undefined);
-            setError(
-              `部分完成：已写入 ${nextCompleted.map((id) => TOOL_LABELS[id]).join("、")}；${TOOL_LABELS[nextTool]} 失败（${formatErrorMessage(nextErr)}）`,
-            );
-            return;
-          }
+    await run(
+      async () => {
+        await api.applyUserAsset(currentPlan.token);
+        const nextCompleted = [...completedTools, currentPlan.ideId as AssetIde];
+        await refreshAll(api);
+        if (!mountedRef.current) return;
+        if (remainingTools.length > 0 && drawerAsset) {
+          await previewNextInQueue(api, key, totalTools, nextCompleted, remainingTools);
+          return;
         }
-      }
-      setAssetPlanQueue(undefined);
-      setDrawerAsset(undefined);
-      setNotice(
-        `${ACTION_VERBS[currentPlan.action]}完成：${nextCompleted.map((id) => TOOL_LABELS[id]).join("、")}`,
-      );
-    });
+        setAssetPlanQueue(undefined);
+        setDrawerAsset(undefined);
+        setNotice(
+          `${ACTION_VERBS[currentPlan.action]}完成：${nextCompleted.map((id) => TOOL_LABELS[id]).join("、")}`,
+        );
+      },
+      { overlay: true },
+    );
   }
 
-  async function startMcpPreview(action: "install" | "update" | "uninstall"): Promise<void> {
+  async function retryCurrentAssetPlanWithForce(): Promise<void> {
+    if (!api || !assetPlanQueue) return;
+    const { key, currentPlan, existingId } = assetPlanQueue;
+    await run(
+      async () => {
+        const nextPlan = await api.previewUserAsset(
+          currentPlan.action,
+          key,
+          currentPlan.ideId as AssetIde,
+          existingId,
+          true,
+        );
+        if (!mountedRef.current) return;
+        setSelectedChangeIndex(0);
+        setAssetPlanQueue((cur) => (cur ? { ...cur, currentPlan: nextPlan, force: true } : undefined));
+      },
+      { overlay: true },
+    );
+  }
+
+  async function skipCurrentAssetPlan(): Promise<void> {
+    if (!api || !assetPlanQueue) return;
+    const { key, totalTools, completedTools, remainingTools } = assetPlanQueue;
+    await run(
+      async () => {
+        await api.clearUserAssetPreview?.();
+        await previewNextInQueue(api, key, totalTools, completedTools, remainingTools);
+      },
+      { overlay: true },
+    );
+  }
+
+  async function startMcpPreview(action: "install" | "update" | "uninstall", force = false): Promise<void> {
     if (!api || !drawerMcp) return;
-    await run(async () => {
-      const preview = await api.previewMcp(action, drawerMcp.id, drawerMcpTool, mcpEnvValues);
-      setMcpPreview(preview);
-    });
+    await run(
+      async () => {
+        const preview = await api.previewMcp(action, drawerMcp.id, drawerMcpTool, mcpEnvValues, force);
+        if (!mountedRef.current) return;
+        setMcpPreview({ ...preview, force });
+      },
+      { overlay: true },
+    );
   }
 
   async function applyCurrentMcpPreview(): Promise<void> {
     if (!api || !mcpPreview) return;
-    await run(async () => {
-      await api.applyMcp(mcpPreview.token);
-      await refreshAll(api);
-      setMcpPreview(undefined);
-      setDrawerMcp(undefined);
-      setMcpEnvValues({});
-      setNotice(`MCP ${ACTION_VERBS[mcpPreview.action]}完成`);
-    });
+    await run(
+      async () => {
+        await api.applyMcp(mcpPreview.token);
+        await refreshAll(api);
+        if (!mountedRef.current) return;
+        setMcpPreview(undefined);
+        setDrawerMcp(undefined);
+        setMcpEnvValues({});
+        setNotice(`MCP ${ACTION_VERBS[mcpPreview.action]}完成`);
+      },
+      { overlay: true },
+    );
   }
 
   async function submitCustomMcp(): Promise<void> {
     if (!api) return;
     const envKeys = customEnvKeys
       .split(/[,，\s]+/)
-      .map((item) => item.trim().toUpperCase())
-      .filter(Boolean);
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => (customTransport === "stdio" ? item.toUpperCase() : item));
     const definition: McpServerDefinition = {
       schemaVersion: 1,
       id: customId.trim(),
@@ -359,17 +607,23 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
         placeholder: customEnvSecret ? "仅存本机配置文件" : "",
       })),
     };
-    await run(async () => {
-      await api.saveCustomMcp(definition);
-      await refreshAll(api);
-      setShowAddMcp(false);
-      setCustomId("");
-      setCustomTitle("");
-      setCustomArgs("");
-      setCustomUrl("");
-      setCustomEnvKeys("");
-      setNotice(`已添加 MCP：${definition.title}`);
-    });
+    const isEditing = Boolean(editingCustomMcpId);
+    await run(
+      async () => {
+        await api.saveCustomMcp(definition, isEditing);
+        await refreshAll(api);
+        if (!mountedRef.current) return;
+        setShowAddMcp(false);
+        setEditingCustomMcpId(undefined);
+        setCustomId("");
+        setCustomTitle("");
+        setCustomArgs("");
+        setCustomUrl("");
+        setCustomEnvKeys("");
+        setNotice(isEditing ? `已更新自定义 MCP：${definition.title}` : `已添加 MCP：${definition.title}`);
+      },
+      { overlay: true },
+    );
   }
 
   const currentChange = assetPlanQueue?.currentPlan.changes[selectedChangeIndex];
@@ -410,7 +664,7 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               type="button"
               className="primary-button"
               disabled={busy || !api}
-              onClick={() => setShowAddMcp(true)}
+              onClick={() => openCustomMcpModal()}
             >
               <Plus size={15} aria-hidden="true" />
               添加 MCP
@@ -421,7 +675,15 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               className="primary-button"
               disabled={busy || !api}
               onClick={() => {
-                if (api) void run(async () => setPendingImport(await api.inspectPluginSource()));
+                if (api) {
+                  void run(async () => {
+                    const inspected = await api.inspectPluginSource();
+                    if (mountedRef.current) {
+                      setOverlayError("");
+                      setPendingImport(inspected);
+                    }
+                  });
+                }
               }}
             >
               <FolderPlus size={15} aria-hidden="true" />
@@ -491,7 +753,15 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               className="secondary-button"
               disabled={busy || !api}
               onClick={() => {
-                if (api) void run(async () => setPendingImport(await api.inspectPluginSource()));
+                if (api) {
+                  void run(async () => {
+                    const inspected = await api.inspectPluginSource();
+                    if (mountedRef.current) {
+                      setOverlayError("");
+                      setPendingImport(inspected);
+                    }
+                  });
+                }
               }}
             >
               <FolderPlus size={15} aria-hidden="true" />
@@ -502,6 +772,8 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
           <section className="asset-card-grid">
             {visibleAssets.map((item) => {
               const records = installedForSource(item);
+              const hasConflict = records.some((rec) => rec.issues.length > 0);
+              const hasUpdate = records.some((rec) => assessAssetRecord(item, rec) === "updatable");
               return (
                 <article className="asset-card" key={item.key}>
                   <div className="asset-card-head">
@@ -530,11 +802,30 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                   <div className="asset-card-foot">
                     <div className="asset-card-meta">
                       {records.length > 0 ? (
-                        records.map((rec) => (
-                          <span className="badge badge--success" key={`${rec.target.ideId}:${rec.id}`}>
-                            已装 · {TOOL_LABELS[rec.target.ideId]}
-                          </span>
-                        ))
+                        records.map((rec) => {
+                          const state = assessAssetRecord(item, rec);
+                          const tone =
+                            state === "conflict"
+                              ? "badge--danger"
+                              : state === "updatable"
+                                ? "badge--brand"
+                                : state === "different-version"
+                                  ? "badge--muted"
+                                  : "badge--success";
+                          const label =
+                            state === "conflict"
+                              ? `冲突 · ${TOOL_LABELS[rec.target.ideId]}`
+                              : state === "updatable"
+                                ? `可更新 · ${TOOL_LABELS[rec.target.ideId]}`
+                                : state === "different-version"
+                                  ? `已装 v${rec.version} · ${TOOL_LABELS[rec.target.ideId]}`
+                                  : `已装 · ${TOOL_LABELS[rec.target.ideId]}`;
+                          return (
+                            <span className={`badge ${tone}`} key={`${rec.target.ideId}:${rec.id}`}>
+                              {label}
+                            </span>
+                          );
+                        })
                       ) : (
                         <span className="badge badge--muted">未安装</span>
                       )}
@@ -549,7 +840,7 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                             if (api) {
                               void run(async () => {
                                 const exported = await api.exportTraeWorkSkill(item.key);
-                                if (exported) setNotice(`已导出：${exported.path}`);
+                                if (exported && mountedRef.current) setNotice(`已导出：${exported.path}`);
                               });
                             }
                           }}
@@ -563,7 +854,7 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                         disabled={busy || !api}
                         onClick={() => openAssetDrawer(item)}
                       >
-                        {records.length > 0 ? "管理 / 同步" : "安装"}
+                        {hasConflict ? "修复 / 管理" : hasUpdate ? "更新 / 同步" : records.length > 0 ? "管理 / 同步" : "安装"}
                       </button>
                     </div>
                   </div>
@@ -575,7 +866,7 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
       ) : visibleMcps.length === 0 ? (
         <div className="empty-state">
           <span>暂无匹配的 MCP 连接器</span>
-          <button type="button" className="secondary-button" disabled={busy || !api} onClick={() => setShowAddMcp(true)}>
+          <button type="button" className="secondary-button" disabled={busy || !api} onClick={() => openCustomMcpModal()}>
             <Plus size={15} aria-hidden="true" />
             添加 MCP
           </button>
@@ -608,31 +899,47 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                 <div className="asset-card-foot">
                   <div className="asset-card-meta">
                     {records.length > 0 ? (
-                      records.map((rec) => (
-                        <span
-                          className={`badge ${rec.issues.length ? "badge--danger" : "badge--success"}`}
-                          key={`${rec.toolId}:${rec.id}`}
-                        >
-                          {rec.issues.length ? "需处理" : "已配置"} · {TOOL_LABELS[rec.toolId]}
-                        </span>
-                      ))
+                      records.map((rec) => {
+                        const needsUpdate = !rec.issues.length && compareSemver(server.version, rec.version) > 0;
+                        return (
+                          <span
+                            className={`badge ${rec.issues.length ? "badge--danger" : needsUpdate ? "badge--brand" : "badge--success"}`}
+                            key={`${rec.toolId}:${rec.id}`}
+                          >
+                            {rec.issues.length ? "冲突" : needsUpdate ? "可更新" : "已配置"} · {TOOL_LABELS[rec.toolId]}
+                          </span>
+                        );
+                      })
                     ) : (
                       <span className="badge badge--muted">未配置</span>
                     )}
                   </div>
                   <div className="asset-actions">
+                    {!server.preset && (
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={`编辑 ${server.title}`}
+                        title="编辑定义"
+                        disabled={busy || !api}
+                        onClick={() => openCustomMcpModal(server)}
+                      >
+                        <PencilSimple size={15} />
+                      </button>
+                    )}
                     {!server.preset && records.length === 0 && (
                       <button
                         type="button"
                         className="icon-button"
                         aria-label={`删除 ${server.title}`}
+                        title="删除自定义 MCP"
                         disabled={busy || !api}
                         onClick={() => {
                           if (api) {
                             void run(async () => {
                               await api.removeCustomMcp(server.id);
                               await refreshAll(api);
-                              setNotice(`已删除自定义 MCP：${server.title}`);
+                              if (mountedRef.current) setNotice(`已删除自定义 MCP：${server.title}`);
                             });
                           }
                         }}
@@ -685,12 +992,28 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                   </span>
                 </div>
               </div>
-              <button type="button" className="icon-button" onClick={() => setDrawerAsset(undefined)} disabled={busy} aria-label="关闭">
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setDrawerAsset(undefined);
+                  setOverlayError("");
+                }}
+                disabled={busy}
+                aria-label="关闭"
+              >
                 <X size={18} />
               </button>
             </header>
 
             <div className="drawer-body">
+              {overlayError && !assetPlanQueue && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
+
               {drawerAsset.skills.length > 0 && (
                 <div className="drawer-section">
                   <h3>包含技能 · {drawerAsset.skills.length}</h3>
@@ -755,15 +1078,22 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                 <h3>目标 AI 工具（可多选同步）</h3>
                 {(["antigravity", "codex", "traework", "generic"] as AssetIde[]).map((ide) => {
                   const compat = assetCompatibility(drawerAsset, ide);
-                  const installed = installedForSource(drawerAsset).find((rec) => rec.target.ideId === ide);
+                  const existingAll = installedForSource(drawerAsset);
+                  const installed = existingAll.find((rec) => rec.target.ideId === ide);
+                  const sharedSibling =
+                    drawerAsset.kind === "skill" && (ide === "codex" || ide === "generic")
+                      ? existingAll.find((rec) => rec.target.ideId === (ide === "codex" ? "generic" : "codex"))
+                      : undefined;
+                  const state = installed ? assessAssetRecord(drawerAsset, installed) : undefined;
                   const checked = drawerAssetTools.includes(ide);
                   const probed = tools.find((t) => t.id === ide);
+                  const blockedByShared = Boolean(!installed && sharedSibling);
                   return (
                     <button
                       type="button"
                       key={ide}
-                      className={`drawer-tool-row${checked ? " selected" : ""}${!compat.supported ? " disabled" : ""}`}
-                      disabled={busy || !compat.supported}
+                      className={`drawer-tool-row${checked ? " selected" : ""}${!compat.supported || blockedByShared ? " disabled" : ""}`}
+                      disabled={busy || !compat.supported || blockedByShared}
                       onClick={() => toggleDrawerAssetTool(ide)}
                     >
                       <div className="asset-card-meta">
@@ -776,8 +1106,20 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                       <div>
                         {!compat.supported ? (
                           <span className="badge badge--muted">{compat.reason}</span>
+                        ) : blockedByShared && sharedSibling ? (
+                          <span className="badge badge--muted">
+                            共用目录 · 已装于 {TOOL_LABELS[sharedSibling.target.ideId]}
+                          </span>
+                        ) : state === "conflict" ? (
+                          <span className="badge badge--danger">冲突·覆盖修复</span>
+                        ) : state === "updatable" && installed ? (
+                          <span className="badge badge--brand">
+                            {installed.version === drawerAsset.version ? "有内容更新" : `可更新 (v${installed.version})`}
+                          </span>
+                        ) : state === "different-version" && installed ? (
+                          <span className="badge badge--muted">已装 v{installed.version}</span>
                         ) : installed ? (
-                          <span className="badge badge--success">已装 v{installed.version}</span>
+                          <span className="badge badge--success">已是最新</span>
                         ) : (
                           <span className="badge badge--brand">可安装</span>
                         )}
@@ -789,7 +1131,15 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
             </div>
 
             <footer className="drawer-footer">
-              <button type="button" className="secondary-button" onClick={() => setDrawerAsset(undefined)} disabled={busy}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setDrawerAsset(undefined);
+                  setOverlayError("");
+                }}
+                disabled={busy}
+              >
                 返回
               </button>
               <button
@@ -799,10 +1149,11 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                 onClick={() => void startAssetPreviewBatch()}
               >
                 {(() => {
-                  const hasInstalled = drawerAssetTools.some((ide) =>
-                    installedForSource(drawerAsset).some((rec) => rec.target.ideId === ide),
-                  );
-                  const base = hasInstalled ? "查看变更" : "安装";
+                  const existingForSelected = drawerAssetTools
+                    .map((ide) => installedForSource(drawerAsset).find((rec) => rec.target.ideId === ide))
+                    .filter((rec): rec is InstalledAssetRecord => Boolean(rec));
+                  const hasConflict = existingForSelected.some((rec) => rec.issues.length > 0);
+                  const base = hasConflict ? "覆盖修复预览" : existingForSelected.length > 0 ? "查看变更" : "安装";
                   return drawerAssetTools.length > 1 ? `${base} (${drawerAssetTools.length} 个工具)` : base;
                 })()}
               </button>
@@ -827,12 +1178,28 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                   </span>
                 </div>
               </div>
-              <button type="button" className="icon-button" onClick={() => setDrawerMcp(undefined)} disabled={busy} aria-label="关闭">
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setDrawerMcp(undefined);
+                  setOverlayError("");
+                }}
+                disabled={busy}
+                aria-label="关闭"
+              >
                 <X size={18} />
               </button>
             </header>
 
             <div className="drawer-body">
+              {overlayError && !mcpPreview && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
+
               <div className="drawer-section">
                 <h3>目标 AI 工具（单选）</h3>
                 {(["antigravity", "codex"] as McpToolId[]).map((toolId) => {
@@ -846,14 +1213,21 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                       key={toolId}
                       className={`drawer-tool-row${selected ? " selected" : ""}`}
                       disabled={busy}
-                      onClick={() => setDrawerMcpTool(toolId)}
+                      onClick={() => {
+                        setDrawerMcpTool(toolId);
+                        setOverlayError("");
+                      }}
                     >
                       <div className="asset-card-meta">
                         <span className="radio-dot" aria-hidden="true" />
                         <strong>{TOOL_LABELS[toolId]}</strong>
                       </div>
-                      <span className={`badge ${rec ? "badge--success" : "badge--muted"}`}>
-                        {rec ? "已配置" : "未配置"}
+                      <span
+                        className={`badge ${
+                          rec?.issues.length ? "badge--danger" : rec ? "badge--success" : "badge--muted"
+                        }`}
+                      >
+                        {rec?.issues.length ? "冲突·需处理" : rec ? "已配置" : "未配置"}
                       </span>
                     </button>
                   );
@@ -876,25 +1250,42 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                       仅存本机
                     </span>
                   </div>
-                  {drawerMcp.envSchema.map((field) => (
-                    <label className="form-field" key={field.key}>
-                      <span className="form-label-row">
-                        <span>
-                          {field.label} {field.required ? "*" : ""}
+                  {drawerMcp.envSchema.map((field) => {
+                    const revealed = !!revealedMcpKeys[field.key];
+                    return (
+                      <label className="form-field" key={field.key}>
+                        <span className="form-label-row">
+                          <span>
+                            {field.label} {field.required ? "*" : ""}
+                          </span>
+                          <span className="mono-inline">{field.key}</span>
                         </span>
-                        <span className="mono-inline">{field.key}</span>
-                      </span>
-                      <input
-                        type={field.secret ? "password" : "text"}
-                        className="form-input mono"
-                        value={mcpEnvValues[field.key] ?? ""}
-                        placeholder={field.placeholder ?? ""}
-                        onChange={(event) =>
-                          setMcpEnvValues((current) => ({ ...current, [field.key]: event.target.value }))
-                        }
-                      />
-                    </label>
-                  ))}
+                        <div className="secret-input-wrap">
+                          <input
+                            type={field.secret && !revealed ? "password" : "text"}
+                            className="form-input mono"
+                            value={mcpEnvValues[field.key] ?? ""}
+                            placeholder={field.placeholder ?? ""}
+                            onChange={(event) => {
+                              setOverlayError("");
+                              setMcpEnvValues((current) => ({ ...current, [field.key]: event.target.value }));
+                            }}
+                          />
+                          {field.secret && (
+                            <button
+                              type="button"
+                              className="text-button secret-toggle-btn"
+                              onClick={() =>
+                                setRevealedMcpKeys((cur) => ({ ...cur, [field.key]: !cur[field.key] }))
+                              }
+                            >
+                              {revealed ? "隐藏" : "显示明文"}
+                            </button>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -905,21 +1296,34 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                   type="button"
                   className="danger-button"
                   disabled={busy}
-                  onClick={() => void startMcpPreview("uninstall")}
+                  onClick={() => void startMcpPreview("uninstall", drawerMcpInstalled.issues.length > 0)}
                 >
-                  查看卸载范围
+                  {drawerMcpInstalled.issues.length > 0 ? "强制卸载" : "查看卸载范围"}
                 </button>
               )}
-              <button type="button" className="secondary-button" onClick={() => setDrawerMcp(undefined)} disabled={busy}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setDrawerMcp(undefined);
+                  setOverlayError("");
+                }}
+                disabled={busy}
+              >
                 返回
               </button>
               <button
                 type="button"
                 className="primary-button"
                 disabled={busy}
-                onClick={() => void startMcpPreview(drawerMcpInstalled ? "update" : "install")}
+                onClick={() =>
+                  void startMcpPreview(
+                    drawerMcpInstalled ? "update" : "install",
+                    Boolean(drawerMcpInstalled?.issues.length),
+                  )
+                }
               >
-                查看配置变更
+                {drawerMcpInstalled?.issues.length ? "覆盖修复预览" : "查看配置变更"}
               </button>
             </footer>
           </aside>
@@ -932,11 +1336,26 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
           <section className="modal" role="dialog" aria-modal="true" aria-label="导入预览">
             <header className="modal-header">
               <h2>导入预览</h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setPendingImport(undefined)}>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="关闭"
+                disabled={busy}
+                onClick={() => {
+                  setPendingImport(undefined);
+                  setOverlayError("");
+                }}
+              >
                 <X size={18} />
               </button>
             </header>
             <div className="modal-body">
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               <div className="preview-meta">
                 <strong>
                   {pendingImport.title} · v{pendingImport.version}
@@ -948,7 +1367,15 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               </div>
             </div>
             <footer className="modal-actions">
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setPendingImport(undefined)}>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => {
+                  setPendingImport(undefined);
+                  setOverlayError("");
+                }}
+              >
                 返回
               </button>
               <button
@@ -957,12 +1384,17 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                 disabled={busy}
                 onClick={() => {
                   if (api) {
-                    void run(async () => {
-                      await api.importPluginSource();
-                      await refreshAll(api);
-                      setPendingImport(undefined);
-                      setNotice("导入完成");
-                    });
+                    void run(
+                      async () => {
+                        await api.importPluginSource();
+                        await refreshAll(api);
+                        if (mountedRef.current) {
+                          setPendingImport(undefined);
+                          setNotice("导入完成");
+                        }
+                      },
+                      { overlay: true },
+                    );
                   }
                 }}
               >
@@ -973,40 +1405,100 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
         </div>
       )}
 
-      {/* 添加自定义 MCP 弹窗 */}
+      {/* 添加 / 编辑自定义 MCP 弹窗 */}
       {showAddMcp && (
         <div className="modal-backdrop">
-          <section className="modal" role="dialog" aria-modal="true" aria-label="添加自定义 MCP">
+          <section
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editingCustomMcpId ? "编辑自定义 MCP" : "添加自定义 MCP"}
+          >
             <header className="modal-header">
-              <h2>添加自定义 MCP</h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setShowAddMcp(false)}>
+              <h2>{editingCustomMcpId ? "编辑自定义 MCP" : "添加自定义 MCP"}</h2>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="关闭"
+                disabled={busy}
+                onClick={() => {
+                  setShowAddMcp(false);
+                  setEditingCustomMcpId(undefined);
+                  setOverlayError("");
+                }}
+              >
                 <X size={18} />
               </button>
             </header>
             <div className="modal-body">
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               <div className="drawer-section">
                 <label className="form-field">
                   <span className="form-label-row">
                     <span>标识 ID *</span>
-                    <span className="mono-inline">a-z / 0-9 / -</span>
+                    <span className="mono-inline">{editingCustomMcpId ? "编辑时不可变更" : "a-z / 0-9 / -"}</span>
                   </span>
-                  <input className="form-input mono" value={customId} onChange={(e) => setCustomId(e.target.value)} placeholder="my-custom-mcp" />
+                  <input
+                    className="form-input mono"
+                    value={customId}
+                    disabled={Boolean(editingCustomMcpId)}
+                    onChange={(e) => {
+                      setOverlayError("");
+                      setCustomId(e.target.value);
+                    }}
+                    placeholder="my-custom-mcp"
+                  />
                 </label>
                 <label className="form-field">
                   <span className="form-label-row"><span>显示名称 *</span></span>
-                  <input className="form-input" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} placeholder="企业内部检索 MCP" />
+                  <input
+                    className="form-input"
+                    value={customTitle}
+                    onChange={(e) => {
+                      setOverlayError("");
+                      setCustomTitle(e.target.value);
+                    }}
+                    placeholder="企业内部检索 MCP"
+                  />
                 </label>
                 <label className="form-field">
                   <span className="form-label-row"><span>版本号</span></span>
-                  <input className="form-input mono" value={customVersion} onChange={(e) => setCustomVersion(e.target.value)} placeholder="1.0.0" />
+                  <input
+                    className="form-input mono"
+                    value={customVersion}
+                    onChange={(e) => {
+                      setOverlayError("");
+                      setCustomVersion(e.target.value);
+                    }}
+                    placeholder="1.0.0"
+                  />
                 </label>
                 <div className="form-field">
                   <span className="form-label-row"><span>传输方式</span></span>
                   <div className="segmented">
-                    <button type="button" className={customTransport === "stdio" ? "active" : ""} onClick={() => setCustomTransport("stdio")}>
+                    <button
+                      type="button"
+                      className={customTransport === "stdio" ? "active" : ""}
+                      onClick={() => {
+                        setOverlayError("");
+                        setCustomTransport("stdio");
+                      }}
+                    >
                       stdio（本机命令）
                     </button>
-                    <button type="button" className={customTransport === "http" ? "active" : ""} onClick={() => setCustomTransport("http")}>
+                    <button
+                      type="button"
+                      className={customTransport === "http" ? "active" : ""}
+                      onClick={() => {
+                        setOverlayError("");
+                        setCustomTransport("http");
+                      }}
+                    >
                       HTTP（远程地址）
                     </button>
                   </div>
@@ -1015,22 +1507,56 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                   <>
                     <label className="form-field">
                       <span className="form-label-row"><span>启动命令 *</span></span>
-                      <input className="form-input mono" value={customCommand} onChange={(e) => setCustomCommand(e.target.value)} placeholder="npx" />
+                      <input
+                        className="form-input mono"
+                        value={customCommand}
+                        onChange={(e) => {
+                          setOverlayError("");
+                          setCustomCommand(e.target.value);
+                        }}
+                        placeholder="npx"
+                      />
                     </label>
                     <label className="form-field">
                       <span className="form-label-row"><span>命令参数（空格分隔）</span></span>
-                      <input className="form-input mono" value={customArgs} onChange={(e) => setCustomArgs(e.target.value)} placeholder="-y @scope/mcp-server" />
+                      <input
+                        className="form-input mono"
+                        value={customArgs}
+                        onChange={(e) => {
+                          setOverlayError("");
+                          setCustomArgs(e.target.value);
+                        }}
+                        placeholder="-y @scope/mcp-server"
+                      />
                     </label>
                   </>
                 ) : (
                   <label className="form-field">
                     <span className="form-label-row"><span>远程地址（HTTPS / localhost）*</span></span>
-                    <input className="form-input mono" value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} placeholder="https://mcp.example.com/sse" />
+                    <input
+                      className="form-input mono"
+                      value={customUrl}
+                      onChange={(e) => {
+                        setOverlayError("");
+                        setCustomUrl(e.target.value);
+                      }}
+                      placeholder="https://mcp.example.com/sse"
+                    />
                   </label>
                 )}
                 <label className="form-field">
-                  <span className="form-label-row"><span>环境变量 / Header 字段（逗号分隔）</span></span>
-                  <input className="form-input mono" value={customEnvKeys} onChange={(e) => setCustomEnvKeys(e.target.value)} placeholder="API_TOKEN, ORG_ID" />
+                  <span className="form-label-row">
+                    <span>{customTransport === "http" ? "HTTP Header 字段（支持连字符，逗号分隔）" : "环境变量字段（逗号分隔）"}</span>
+                  </span>
+                  <input
+                    className="form-input mono"
+                    value={customEnvKeys}
+                    onChange={(e) => {
+                      setOverlayError("");
+                      setCustomEnvKeys(e.target.value);
+                    }}
+                    placeholder={customTransport === "http" ? "X-API-Key, Authorization" : "API_TOKEN, ORG_ID"}
+                  />
                 </label>
                 <label className="asset-card-meta">
                   <input type="checkbox" checked={customEnvSecret} onChange={(e) => setCustomEnvSecret(e.target.checked)} />
@@ -1039,11 +1565,25 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               </div>
             </div>
             <footer className="modal-actions">
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setShowAddMcp(false)}>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => {
+                  setShowAddMcp(false);
+                  setEditingCustomMcpId(undefined);
+                  setOverlayError("");
+                }}
+              >
                 返回
               </button>
-              <button type="button" className="primary-button" disabled={busy || !customId.trim() || !customTitle.trim()} onClick={() => void submitCustomMcp()}>
-                保存定义
+              <button
+                type="button"
+                className="primary-button"
+                disabled={busy || !customId.trim() || !customTitle.trim()}
+                onClick={() => void submitCustomMcp()}
+              >
+                {editingCustomMcpId ? "保存修改" : "保存定义"}
               </button>
             </footer>
           </section>
@@ -1056,10 +1596,10 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
           <section className="modal preview-modal" role="dialog" aria-modal="true" aria-label="资产变更预览">
             <header className="modal-header">
               <h2>
-                {ACTION_VERBS[assetPlanQueue.currentPlan.action]}预览 ·{" "}
+                {assetPlanQueue.force ? "覆盖修复" : ACTION_VERBS[assetPlanQueue.currentPlan.action]}预览 ·{" "}
                 {TOOL_LABELS[assetPlanQueue.currentPlan.ideId as AssetIde] ?? assetPlanQueue.currentPlan.ideId}
               </h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setAssetPlanQueue(undefined)}>
+              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={closeAssetPlanModal}>
                 <X size={18} />
               </button>
             </header>
@@ -1070,6 +1610,12 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                 </strong>
                 <span>{assetPlanQueue.currentPlan.destination}</span>
               </div>
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               {assetPlanQueue.currentPlan.conflicts.length > 0 && (
                 <div className="issue-box" role="alert">
                   <WarningCircle size={18} style={{ flex: "none" }} />
@@ -1082,21 +1628,25 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               )}
               <div className="preview-section">
                 <h3>文件变更 · {assetPlanQueue.currentPlan.changes.length}</h3>
-                <div className="change-list">
-                  {assetPlanQueue.currentPlan.changes.map((file, index) => (
-                    <button
-                      type="button"
-                      className={`change-row${selectedChangeIndex === index ? " active" : ""}`}
-                      key={file.path}
-                      onClick={() => setSelectedChangeIndex(index)}
-                    >
-                      <span className={`change-action ${file.action}`}>
-                        {file.action === "add" ? "新增" : file.action === "remove" ? "删除" : "修改"}
-                      </span>
-                      <span>{file.path}</span>
-                    </button>
-                  ))}
-                </div>
+                {assetPlanQueue.currentPlan.changes.length === 0 ? (
+                  <div className="mono-inline">当前内容已是最新，无需写入。</div>
+                ) : (
+                  <div className="change-list">
+                    {assetPlanQueue.currentPlan.changes.map((file, index) => (
+                      <button
+                        type="button"
+                        className={`change-row${selectedChangeIndex === index ? " active" : ""}`}
+                        key={file.path}
+                        onClick={() => setSelectedChangeIndex(index)}
+                      >
+                        <span className={`change-action ${file.action}`}>
+                          {file.action === "add" ? "新增" : file.action === "remove" ? "删除" : "修改"}
+                        </span>
+                        <span>{file.path}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               {currentChange && (
                 <div className="file-diff">
@@ -1116,18 +1666,37 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               )}
             </div>
             <footer className="modal-actions">
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setAssetPlanQueue(undefined)}>
+              <button type="button" className="secondary-button" disabled={busy} onClick={closeAssetPlanModal}>
                 返回
               </button>
+              {assetPlanQueue.remainingTools.length > 0 && (
+                <button type="button" className="secondary-button" disabled={busy} onClick={() => void skipCurrentAssetPlan()}>
+                  跳过此工具并继续
+                </button>
+              )}
+              {assetPlanQueue.currentPlan.conflicts.length > 0 && !assetPlanQueue.force && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => void retryCurrentAssetPlanWithForce()}
+                >
+                  覆盖修复预览
+                </button>
+              )}
               <button
                 type="button"
                 className={assetPlanQueue.currentPlan.action === "uninstall" ? "danger-button" : "primary-button"}
-                disabled={busy || assetPlanQueue.currentPlan.conflicts.length > 0}
+                disabled={
+                  busy ||
+                  assetPlanQueue.currentPlan.conflicts.length > 0 ||
+                  assetPlanQueue.currentPlan.changes.length === 0
+                }
                 onClick={() => void applyCurrentAssetPlan()}
               >
                 {assetPlanQueue.totalTools > 1
-                  ? `确认${ACTION_VERBS[assetPlanQueue.currentPlan.action]} (${assetPlanQueue.completedTools.length + 1}/${assetPlanQueue.totalTools})`
-                  : `确认${ACTION_VERBS[assetPlanQueue.currentPlan.action]}`}
+                  ? `确认${assetPlanQueue.force ? "覆盖修复" : ACTION_VERBS[assetPlanQueue.currentPlan.action]} (${assetPlanQueue.completedTools.length + 1}/${assetPlanQueue.totalTools})`
+                  : `确认${assetPlanQueue.force ? "覆盖修复" : ACTION_VERBS[assetPlanQueue.currentPlan.action]}`}
               </button>
             </footer>
           </section>
@@ -1140,9 +1709,9 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
           <section className="modal preview-modal" role="dialog" aria-modal="true" aria-label="MCP 脱敏配置预览">
             <header className="modal-header">
               <h2>
-                MCP {ACTION_VERBS[mcpPreview.action]}确认 · {TOOL_LABELS[mcpPreview.toolId]}
+                MCP {mcpPreview.force ? "覆盖修复" : ACTION_VERBS[mcpPreview.action]}确认 · {TOOL_LABELS[mcpPreview.toolId]}
               </h2>
-              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={() => setMcpPreview(undefined)}>
+              <button type="button" className="icon-button" aria-label="关闭" disabled={busy} onClick={closeMcpPreviewModal}>
                 <X size={18} />
               </button>
             </header>
@@ -1153,6 +1722,12 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
                 </strong>
                 <span>写入路径：{mcpPreview.targetPath} · 敏感字段已脱敏</span>
               </div>
+              {overlayError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none" }} />
+                  <span>{overlayError}</span>
+                </div>
+              )}
               {mcpPreview.conflicts.length > 0 && (
                 <div className="issue-box" role="alert">
                   <WarningCircle size={18} style={{ flex: "none" }} />
@@ -1178,16 +1753,26 @@ export function AssetsPage({ api }: { api?: AssetsApi }) {
               </div>
             </div>
             <footer className="modal-actions">
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => setMcpPreview(undefined)}>
+              <button type="button" className="secondary-button" disabled={busy} onClick={closeMcpPreviewModal}>
                 返回
               </button>
+              {mcpPreview.conflicts.length > 0 && !mcpPreview.force && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => void startMcpPreview(mcpPreview.action, true)}
+                >
+                  覆盖修复预览
+                </button>
+              )}
               <button
                 type="button"
                 className={mcpPreview.action === "uninstall" ? "danger-button" : "primary-button"}
                 disabled={busy || mcpPreview.conflicts.length > 0}
                 onClick={() => void applyCurrentMcpPreview()}
               >
-                确认{ACTION_VERBS[mcpPreview.action]}
+                确认{mcpPreview.force ? "覆盖修复" : ACTION_VERBS[mcpPreview.action]}
               </button>
             </footer>
           </section>

@@ -339,3 +339,43 @@ test("Stage 1：桌面端检测并恢复中断未完成事务", async () => {
     assert.equal(await readFile(path.join(root, "AGENTS.md"), "utf8"), originalAgents);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("P0 闭环：孤立锁文件检出与强制清理、受管漂移可审查覆盖修复且保留 overrides.md", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "zhishu-desktop-p0-repair-"));
+  try {
+    const operations = new DesktopOperations(sourceLoader);
+    // 1. 孤立锁文件应将 valid 标为 false，并提供 previewForceUninstall/applyForceUninstall 清理出口
+    await writeFile(path.join(root, ".agent-rules.lock.json"), "{}\n", "utf8");
+    const orphanStatus = await operations.inspect(root);
+    assert.equal(orphanStatus.installed, false);
+    assert.equal(orphanStatus.valid, false);
+    assert.ok(orphanStatus.issues.some((i) => i.code === "orphan-lock"));
+    const cleanPlan = await operations.previewForceUninstall(root);
+    assert.deepEqual(cleanPlan.conflicts, []);
+    assert.ok(cleanPlan.changes.some((c) => c.path === ".agent-rules.lock.json" && c.action === "remove"));
+    const cleaned = await operations.applyForceUninstall(root);
+    assert.deepEqual(cleaned.issues, []);
+    assert.equal(cleaned.installed, false);
+
+    // 2. 安装后制造受管漂移 → previewRepair/applyRepair 覆盖修复且保留 overrides.md
+    await operations.previewInstall(root, {
+      rulepacks: ["common"],
+      targets: ["codex"],
+      source: { type: "workspace", path: sourceRoot },
+    });
+    await operations.applyInstall(root);
+    const overridesPath = path.join(root, ".agent-rules", "overrides.md");
+    await writeFile(overridesPath, "# 保留的本地规则\n", "utf8");
+    await writeFile(path.join(root, ".agent-rules", "common", "entry.md"), "# 漂移篡改\n", "utf8");
+    assert.equal((await operations.inspect(root)).valid, false);
+
+    const repairPreview = await operations.previewRepair(root);
+    assert.deepEqual(repairPreview.conflicts, []);
+    assert.ok(repairPreview.changes.some((c) => c.path === ".agent-rules/common/entry.md"));
+    const repaired = await operations.applyRepair(root);
+    assert.equal(repaired.valid, true);
+    assert.equal(await readFile(overridesPath, "utf8"), "# 保留的本地规则\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

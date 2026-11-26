@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CheckCircle, FolderSimple, MagnifyingGlass, WarningCircle, Wrench } from "@phosphor-icons/react";
+import { ArrowClockwise, CheckCircle, FolderSimple, MagnifyingGlass, WarningCircle, Wrench } from "@phosphor-icons/react";
 import { APP_COPY, STACK_LABELS, formatPlatformList } from "./copy";
 import type { RegisteredProject } from "./types";
 
@@ -10,6 +10,7 @@ interface ProjectsPageProps {
   unavailable: boolean;
   error: string;
   notice: string;
+  onRefresh: () => void;
   onAddProject: () => void;
   onSelectProject: (root: string) => void;
   onRecoverProject: (root: string) => void;
@@ -28,7 +29,9 @@ function statusBadge(item: RegisteredProject): { label: string; tone: string } {
     return { label: APP_COPY.status.interrupted, tone: "badge--warning" };
   }
   if (!item.status.installed) {
-    return { label: APP_COPY.status.uninstalled, tone: "badge--muted" };
+    return item.status.issues.length > 0
+      ? { label: APP_COPY.status.invalid, tone: "badge--danger" }
+      : { label: APP_COPY.status.uninstalled, tone: "badge--muted" };
   }
   if (!item.status.valid) {
     return { label: APP_COPY.status.invalid, tone: "badge--danger" };
@@ -43,6 +46,7 @@ export function ProjectsPage({
   unavailable,
   error,
   notice,
+  onRefresh,
   onAddProject,
   onSelectProject,
   onRecoverProject,
@@ -77,6 +81,15 @@ export function ProjectsPage({
               aria-label="搜索项目"
             />
           </div>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onRefresh}
+            disabled={busy || unavailable}
+          >
+            <ArrowClockwise size={15} aria-hidden="true" />
+            {APP_COPY.actions.refresh}
+          </button>
           <button
             type="button"
             className="primary-button"
@@ -146,10 +159,16 @@ export function ProjectsPage({
                       <span className="inline-issue">{item.error}</span>
                     ) : status?.installed ? (
                       <>
-                        <span>{formatPlatformList(status.targets)}</span>
-                        <span>·</span>
+                        {status.targets.length > 0 && (
+                          <>
+                            <span>{formatPlatformList(status.targets)}</span>
+                            <span>·</span>
+                          </>
+                        )}
                         <span>{status.rulepacks.length} 个规则包</span>
                       </>
+                    ) : status && status.issues[0] ? (
+                      <span className="inline-issue">{status.issues[0].message}</span>
                     ) : status && status.detection.stacks.length > 0 ? (
                       status.detection.stacks.map((stack) => (
                         <span className="badge badge--brand" key={stack.id}>

@@ -97,6 +97,32 @@ export interface LegacyAdoptResult {
   legacy: LegacyAssetCandidate[];
 }
 
+export interface LegacyMcpCandidate {
+  key: string;
+  toolId: McpToolId;
+  id: string;
+  title: string;
+  version: string;
+  transport: "stdio" | "http";
+  targetPath: string;
+  originLabel: string;
+  issues: string[];
+}
+
+export interface LegacyMcpAdoptResult {
+  adoptedCount: number;
+  mcps: InstalledMcpRecord[];
+  legacy: LegacyMcpCandidate[];
+}
+
+export interface ToolsSnapshot {
+  tools: ToolInspection[];
+  assets: InstalledAssetRecord[];
+  mcps: InstalledMcpRecord[];
+  legacyAssets: LegacyAssetCandidate[];
+  legacyMcps: LegacyMcpCandidate[];
+}
+
 export interface UserAssetPlan {
   token: string;
   action: "install" | "update" | "uninstall";
@@ -118,24 +144,39 @@ export interface AssetsApi {
   listUserAssets(): Promise<InstalledAssetRecord[]>;
   inspectLegacyAssets?(): Promise<LegacyAssetCandidate[]>;
   adoptLegacyAssets?(keys?: string[]): Promise<LegacyAdoptResult>;
-  previewUserAsset(action: UserAssetPlan["action"], key: string, ide: AssetIde, id?: string): Promise<UserAssetPlan>;
+  previewUserAsset(
+    action: UserAssetPlan["action"],
+    key: string,
+    ide: AssetIde,
+    id?: string,
+    force?: boolean,
+  ): Promise<UserAssetPlan>;
   applyUserAsset(token: string): Promise<InstalledAssetRecord[]>;
+  forgetUserAsset?(ide: AssetIde, id: string): Promise<InstalledAssetRecord[]>;
+  clearUserAssetPreview?(): Promise<void>;
   inspectTools(): Promise<ToolInspection[]>;
+  getToolsSnapshot?(): Promise<ToolsSnapshot>;
   listMcpCatalog(): Promise<McpServerDefinition[]>;
-  saveCustomMcp(definition: McpServerDefinition): Promise<McpServerDefinition[]>;
+  saveCustomMcp(definition: McpServerDefinition, updateExisting?: boolean): Promise<McpServerDefinition[]>;
   removeCustomMcp(id: string): Promise<McpServerDefinition[]>;
   listInstalledMcps(): Promise<InstalledMcpRecord[]>;
+  inspectLegacyMcps?(): Promise<LegacyMcpCandidate[]>;
+  adoptLegacyMcps?(keys?: string[]): Promise<LegacyMcpAdoptResult>;
   previewMcp(
     action: "install" | "update" | "uninstall",
     serverId: string,
     toolId: McpToolId,
     envValues?: Record<string, string>,
+    force?: boolean,
   ): Promise<McpPreview>;
   applyMcp(token: string): Promise<InstalledMcpRecord[]>;
+  forgetMcp?(toolId: McpToolId, id: string): Promise<InstalledMcpRecord[]>;
+  clearMcpPreview?(): Promise<void>;
 }
 
 export type PlatformChoice = "codex" | "antigravity" | "trae" | "qoder" | "cursor" | "workbuddy";
 export type RuleMode = "install" | "update" | "uninstall";
+export type PreviewKind = RuleMode | "repair" | "force-uninstall";
 export type ActiveView = "projects" | "rules" | "assets" | "tools" | "sources" | "evolution";
 
 export type EvolutionChannel = "session-capture" | "overrides-promotion" | "docs-watch";
@@ -265,6 +306,11 @@ export interface EvolutionWatchProgress {
   currentSourceName: string;
 }
 
+export interface EvolutionWatchStatus {
+  watching: boolean;
+  progress?: EvolutionWatchProgress;
+}
+
 export interface EvolutionScanSummary {
   scannedCount: number;
   skippedProjects: { root: string; reason: string }[];
@@ -381,7 +427,7 @@ export interface UpdateCheck {
 }
 
 export interface Preview {
-  kind: RuleMode;
+  kind: PreviewKind;
   root: string;
   changes: Change[];
   retainedPaths: string[];
@@ -462,6 +508,15 @@ export interface AddSourceInput {
   token?: string;
 }
 
+export interface UpdateSourceInput {
+  id: string;
+  name?: string;
+  branch?: string;
+  requiredRulepacks?: string[];
+  token?: string;
+  clearToken?: boolean;
+}
+
 export interface TestSourceInput {
   id?: string;
   access: SourceAccessKind;
@@ -481,12 +536,15 @@ export type DesktopApi = AssetsApi & {
   listSources(): Promise<AssetSourceRecord[]>;
   chooseSourceDir(): Promise<string | undefined>;
   addSource(input: AddSourceInput): Promise<AssetSourceRecord[]>;
+  updateSource?(input: UpdateSourceInput): Promise<AssetSourceRecord[]>;
   removeSource(id: string): Promise<AssetSourceRecord[]>;
   testSource(input: TestSourceInput): Promise<SourceTestResult>;
   syncSource(id: string): Promise<{ sources: AssetSourceRecord[]; message: string }>;
   listEvolutionProposals(): Promise<EvolutionListResult>;
+  getEvolutionWatchStatus?(): Promise<EvolutionWatchStatus>;
   getEvolutionWatchSources(): Promise<WatchSourceConfig[]>;
   saveEvolutionWatchSources(sources: WatchSourceConfig[]): Promise<WatchSourceConfig[]>;
+  resetEvolutionWatchSources?(): Promise<WatchSourceConfig[]>;
   scanEvolutionOverrides(workspaceRoot?: string): Promise<EvolutionScanSummary>;
   watchEvolutionDocs(options?: { sourceIds?: string[]; workspaceRoot?: string }): Promise<EvolutionWatchSummary>;
   cancelEvolutionWatch(): Promise<{ cancelled: boolean }>;
@@ -496,6 +554,7 @@ export type DesktopApi = AssetsApi & {
   recheckEvolutionProposal(
     proposalId: string,
     targetSource: EvolutionTargetSource,
+    editedPatch?: EvolutionPatchEdit,
   ): Promise<{ proposal: EvolutionProposal; conflicts: string[]; list: EvolutionListResult }>;
   previewEvolutionProposal(
     proposalId: string,
@@ -509,11 +568,20 @@ export type DesktopApi = AssetsApi & {
     proposalId: string,
     reason?: string,
   ): Promise<{ proposal: EvolutionProposal; list: EvolutionListResult }>;
+  reopenEvolutionProposal?(
+    proposalId: string,
+  ): Promise<{ proposal: EvolutionProposal; list: EvolutionListResult }>;
+  archiveEvolutionProposal?(
+    proposalId: string,
+  ): Promise<{ proposal: EvolutionProposal; list: EvolutionListResult }>;
   exportEvolutionPatch(
     proposalId: string,
     targetSourceRoot?: string,
+    editedPatch?: EvolutionPatchEdit,
   ): Promise<{ path: string; sha256: string } | undefined>;
   onEvolutionWatchProgress(listener: (progress: EvolutionWatchProgress) => void): () => void;
+  onEvolutionWatchState?(listener: (status: EvolutionWatchStatus) => void): () => void;
+  onEvolutionUpdated?(listener: () => void): () => void;
   chooseProject(): Promise<ProjectStatus | undefined>;
   listProjects(): Promise<RegisteredProject[]>;
   selectProject(root: string): Promise<ProjectStatus>;
@@ -530,6 +598,10 @@ export type DesktopApi = AssetsApi & {
   applyUpdate(): Promise<ProjectStatus>;
   previewUninstall(): Promise<Preview>;
   applyUninstall(): Promise<ProjectStatus>;
+  previewRepair?(request?: InstallRequest): Promise<Preview>;
+  applyRepair?(): Promise<ProjectStatus>;
+  previewForceUninstall?(): Promise<Preview>;
+  applyForceUninstall?(): Promise<ProjectStatus>;
   clearPreview(): Promise<void>;
   getSoftwareUpdate(): Promise<SoftwareUpdateState>;
   checkSoftwareUpdate(): Promise<SoftwareUpdateState>;

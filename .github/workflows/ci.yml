@@ -27,6 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run typecheck --workspace zhishu-desktop
       - run: npm pack --dry-run --workspace zhishu
 
   rule-docs:

@@ -458,3 +458,103 @@ test("AC-EV-07 真实门禁：失效 Markdown 链接与非法 Skill Frontmatter 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("规则进化 P0/P1 闭环：conflict 编辑后重检转 pending、reopen/archive、已通过去重与 3xx SSRF 拦截", async () => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "zhishu-evo-p0-")));
+  try {
+    const repoDir = path.join(root, "repo");
+    const ruleFile = path.join(repoDir, "rulepacks/ui-design/其他规则/07-XR空间界面规范.md");
+    await mkdir(path.dirname(ruleFile), { recursive: true });
+    await writeFile(ruleFile, "# XR 规范\n\n## 1. 基准\n\n- 原条款 A。\n", "utf8");
+
+    const store = new EvolutionStore(path.join(root, "evolution"));
+    const targetSource = { id: "local", name: "本地源", root: repoDir };
+
+    // 1. 故意传入错误锚点触发 conflict，再通过 recheck(id, source, editedPatch) 修正并转回 pending
+    const captured = await store.capture({
+      channel: "session-capture",
+      targetKind: "rule",
+      operation: "add-item",
+      title: "补充新条款 B",
+      targetPath: "rulepacks/ui-design/其他规则/07-XR空间界面规范.md",
+      anchorHeading: "## 99. 不存在的章节",
+      afterSnippet: "- 新条款 B：主操作面板保持 1.2m–2.0m 视距。",
+      evidence: [{ sourceLabel: "评审", summary: "补齐视距约束" }],
+    });
+    const proposalId = captured.proposal!.id;
+    const firstRecheck = await store.recheck(proposalId, targetSource);
+    assert.equal(firstRecheck.proposal.status, "conflict");
+    assert.ok(firstRecheck.conflicts.length > 0);
+
+    // 未解除 conflict 时 preview 应显式拦截
+    const blockedPreview = await store.preview(proposalId, targetSource);
+    assert.ok(blockedPreview.conflicts.some((c) => c.includes("PROPOSAL_CONFLICT")));
+
+    // 携带编辑后锚点重新检测 → 落盘并恢复为 pending，可正常预览并写入
+    const fixed = await store.recheck(proposalId, targetSource, { anchorHeading: "## 1. 基准" });
+    assert.equal(fixed.proposal.status, "pending");
+    assert.deepEqual(fixed.conflicts, []);
+    const okPreview = await store.preview(proposalId, targetSource);
+    assert.deepEqual(okPreview.conflicts, []);
+    const applied = await store.apply(okPreview.token);
+    assert.equal(applied.proposal.status, "approved");
+
+    // 2. 已 approved 指纹重复捕获应折叠，不得再建新提案
+    const dupAfterApproved = await store.capture({
+      channel: "session-capture",
+      targetKind: "rule",
+      operation: "add-item",
+      title: "补充新条款 B",
+      targetPath: "rulepacks/ui-design/其他规则/07-XR空间界面规范.md",
+      anchorHeading: "## 1. 基准",
+      afterSnippet: "- 新条款 B：主操作面板保持 1.2m–2.0m 视距。",
+      evidence: [{ sourceLabel: "重复", summary: "应去重" }],
+    });
+    assert.equal(dupAfterApproved.outcome, "duplicate");
+
+    // 3. reject -> reopen -> archive 全状态流转
+    const second = await store.capture({
+      channel: "session-capture",
+      targetKind: "rule",
+      operation: "add-item",
+      title: "可重开提案 C",
+      targetPath: "rulepacks/ui-design/其他规则/07-XR空间界面规范.md",
+      anchorHeading: "## 1. 基准",
+      afterSnippet: "- 条款 C：测试重开与归档。",
+      evidence: [{ sourceLabel: "测试", summary: "重开验证" }],
+    });
+    await store.reject(second.proposal!.id, "暂不纳入");
+    const reopened = await store.reopen(second.proposal!.id);
+    assert.equal(reopened.status, "pending");
+    const archived = await store.archive(second.proposal!.id);
+    assert.equal(archived.status, "archived");
+
+    // 4. watchOfficialDocs 拦截 3xx 重定向至内网回环地址（SSRF 防护）
+    const ssrfResult = await watchOfficialDocs(
+      [
+        {
+          schemaVersion: 1,
+          id: "ssrf-test",
+          name: "SSRF 测试源",
+          url: "https://docs.example.test/page",
+          targetRulepack: "ui-design",
+          targetPath: "rulepacks/ui-design/其他规则/07-XR空间界面规范.md",
+          keywords: ["test"],
+          enabled: true,
+        },
+      ],
+      repoDir,
+      {
+        fetcher: async () =>
+          new Response("", {
+            status: 302,
+            headers: { location: "http://127.0.0.1:8080/internal" },
+          }),
+      },
+    );
+    assert.equal(ssrfResult.failedCount, 1);
+    assert.match(ssrfResult.results[0]?.message ?? "", /HTTPS|内网|回环/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

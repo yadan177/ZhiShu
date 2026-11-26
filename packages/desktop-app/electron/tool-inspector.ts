@@ -71,6 +71,7 @@ export class ToolInspector {
       hasAgyRoot,
       hasTraeRoot,
       hasTraeApp,
+      hasTraeCnApp,
     ] = await Promise.all([
       this.findCli().catch(() => undefined),
       pathExists(this.codexHome),
@@ -79,6 +80,7 @@ export class ToolInspector {
       pathExists(agyRoot),
       pathExists(traeRoot),
       process.platform === "darwin" ? pathExists("/Applications/TRAE.app") : Promise.resolve(false),
+      process.platform === "darwin" ? pathExists("/Applications/TRAE CN.app") : Promise.resolve(false),
     ]);
 
     const countFor = (toolId: AiToolId): { plugins: number; skills: number; mcps: number } => ({
@@ -87,9 +89,10 @@ export class ToolInspector {
       mcps: installedMcps.filter((item) => item.toolId === toolId).length,
     });
 
-    const codexAvailable = Boolean(codexBinary) || hasCodexHome || hasSharedSkills;
+    // 仅在检测到 Codex CLI 或 ~/.codex 目录时认定 Codex 存在，避免向通用目录安装 Skill 误判 Codex 已就绪。
+    const codexAvailable = Boolean(codexBinary) || hasCodexHome;
     const agyAvailable = hasAgyConfig || hasAgyRoot;
-    const traeAvailable = hasTraeRoot || hasTraeApp;
+    const traeAvailable = hasTraeRoot || hasTraeApp || hasTraeCnApp;
 
     const sandboxPrefix = this.userHome !== os.homedir() ? "[沙盒] " : "";
     const shortPath = (target: string): string => {

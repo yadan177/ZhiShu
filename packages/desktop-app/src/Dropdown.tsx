@@ -69,15 +69,36 @@ export function Dropdown<Value extends string>({ label, value, options, onChange
     const button = trigger.current;
     if (!open || !button) return;
     const rect = button.getBoundingClientRect();
-    const below = window.innerHeight - rect.bottom - 16;
-    const above = rect.top - 16;
-    const upwards = below < Math.min(280, above);
-    setPlacement({ above: upwards, maxHeight: Math.max(48, Math.min(280, upwards ? above : below)) });
-    list.current?.focus();
+    const clipParent = button.closest<HTMLElement>(".workspace-scroll, .modal-body, .drawer-body");
+    const clipRect = clipParent?.getBoundingClientRect();
+    const bottomLimit = clipRect ? Math.min(window.innerHeight, clipRect.bottom) : window.innerHeight;
+    const topLimit = clipRect ? Math.max(0, clipRect.top) : 0;
+    const below = bottomLimit - rect.bottom - 12;
+    const above = rect.top - topLimit - 12;
+    const upwards = below < Math.min(240, above);
+    setPlacement({ above: upwards, maxHeight: Math.max(72, Math.min(280, upwards ? above : below)) });
+    list.current?.focus({ preventScroll: true });
   }, [open]);
   useLayoutEffect(() => {
-    if (open) list.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+    const menu = list.current;
+    if (!open || !menu) return;
+    const activeEl = menu.querySelector<HTMLElement>('[data-active="true"]');
+    if (!activeEl) return;
+    const itemTop = activeEl.offsetTop;
+    const itemBottom = itemTop + activeEl.offsetHeight;
+    if (itemTop < menu.scrollTop) {
+      menu.scrollTop = itemTop;
+    } else if (itemBottom > menu.scrollTop + menu.clientHeight) {
+      menu.scrollTop = itemBottom - menu.clientHeight;
+    }
   }, [open, active]);
+  useEffect(() => {
+    if (!open) return;
+    if (active >= options.length || (active >= 0 && options[active]?.disabled)) {
+      const current = options.findIndex((option) => option.value === value && !option.disabled);
+      setActive(current >= 0 ? current : enabled[0] ?? -1);
+    }
+  }, [open, options, active, value]);
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => {
     if (!open) return;

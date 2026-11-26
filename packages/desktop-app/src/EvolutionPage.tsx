@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
   ArrowClockwise,
+  ArrowCounterClockwise,
   Check,
   CheckCircle,
   DownloadSimple,
@@ -25,12 +27,14 @@ import {
   type EvolutionChannel,
   type EvolutionCounts,
   type EvolutionOperation,
+  type EvolutionPatchEdit,
   type EvolutionPreview,
   type EvolutionProposal,
   type EvolutionStatus,
   type EvolutionTargetKind,
   type EvolutionTargetSource,
   type EvolutionWatchProgress,
+  type EvolutionWatchStatus,
   type WatchSourceConfig,
   type WorkspaceSourceInfo,
 } from "./types";
@@ -140,6 +144,7 @@ interface EvolutionPageProps {
   workspaceSource?: WorkspaceSourceInfo;
   onBadgeCountChange: (count: number) => void;
   onOpenProjects: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
 export function EvolutionPage({
@@ -148,6 +153,7 @@ export function EvolutionPage({
   workspaceSource,
   onBadgeCountChange,
   onOpenProjects,
+  onBusyChange,
 }: EvolutionPageProps) {
   const [proposals, setProposals] = useState<EvolutionProposal[]>([]);
   const [counts, setCounts] = useState<EvolutionCounts>(EMPTY_COUNTS);
@@ -163,6 +169,7 @@ export function EvolutionPage({
   const [draftAnchor, setDraftAnchor] = useState("");
   const [draftBefore, setDraftBefore] = useState("");
   const [draftAfter, setDraftAfter] = useState("");
+  const [confirmDiscardDirty, setConfirmDiscardDirty] = useState(false);
   const [rejectingId, setRejectingId] = useState<string>();
   const [rejectReason, setRejectReason] = useState("");
 
@@ -180,11 +187,31 @@ export function EvolutionPage({
 
   const [busy, setBusy] = useState(false);
   const [watching, setWatching] = useState(false);
+  const [cancellingWatch, setCancellingWatch] = useState(false);
   const [watchProgress, setWatchProgress] = useState<EvolutionWatchProgress>();
   const [failedWatchResults, setFailedWatchResults] = useState<DocsWatchSourceResult[]>([]);
   const [error, setError] = useState("");
+  const [drawerError, setDrawerError] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const [notice, setNotice] = useState("");
   const [justAppliedPath, setJustAppliedPath] = useState<string>();
+
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      onBusyChange?.(false);
+    };
+  }, [onBusyChange]);
+
+  function setBusyState(next: boolean): void {
+    if (!mountedRef.current) return;
+    setBusy(next);
+    onBusyChange?.(next);
+  }
 
   const targetSources = useMemo<EvolutionTargetSource[]>(() => {
     const items: EvolutionTargetSource[] = [];
@@ -204,17 +231,27 @@ export function EvolutionPage({
       if (src.access === "github-release" || src.readonly) {
         items.push({
           id: src.id,
-          name: `${src.name}（只读）`,
+          name: `${src.name}（内置只读）`,
           readonly: true,
         });
         continue;
       }
-      const root = src.access === "local" ? src.location : src.localCheckoutPath;
+      // Git 同步镜像缓存为只读，避免后续来源同步 git reset --hard 覆盖人工审批写入。
+      if (src.access === "git") {
+        items.push({
+          id: src.id,
+          name: src.localCheckoutPath ? `${src.name}（Git 缓存 · 只读）` : `${src.name}（未同步 · 只读）`,
+          root: src.localCheckoutPath,
+          readonly: true,
+        });
+        continue;
+      }
+      const root = src.location;
       if (root && seenRoots.has(root)) continue;
       if (root) seenRoots.add(root);
       items.push({
         id: src.id,
-        name: root ? src.name : `${src.name}（未同步）`,
+        name: src.name,
         root,
         readonly: !root,
       });
@@ -234,74 +271,149 @@ export function EvolutionPage({
   );
 
   useEffect(() => {
-    if (!selectedSourceId && defaultWritableSourceId) {
-      setSelectedSourceId(defaultWritableSourceId);
+    if (!selectedSourceId || !targetSources.some((s) => s.id === selectedSourceId)) {
+      if (defaultWritableSourceId) setSelectedSourceId(defaultWritableSourceId);
     }
-  }, [defaultWritableSourceId, selectedSourceId]);
+  }, [defaultWritableSourceId, selectedSourceId, targetSources]);
 
   const activeProposal = useMemo(
     () => proposals.find((item) => item.id === activeId),
     [proposals, activeId],
   );
 
+  const isDrawerDirty = Boolean(
+    activeProposal &&
+      (activeProposal.status === "pending" || activeProposal.status === "conflict" || activeProposal.status === "stale") &&
+      (draftAnchor !== activeProposal.anchorHeading ||
+        draftBefore !== (activeProposal.beforeSnippet ?? "") ||
+        draftAfter !== (activeProposal.afterSnippet ?? "")),
+  );
+
+  function buildDraftPatch(proposal: EvolutionProposal): EvolutionPatchEdit {
+    return {
+      anchorHeading: draftAnchor,
+      beforeSnippet: proposal.operation === "add-item" ? undefined : draftBefore,
+      afterSnippet: draftAfter,
+    };
+  }
+
   function syncList(next: { proposals: EvolutionProposal[]; counts: EvolutionCounts }): void {
+    if (!mountedRef.current) return;
     setProposals(next.proposals);
     setCounts(next.counts);
     onBadgeCountChange(next.counts.badge);
+  }
+
+  async function refreshProposals(currentApi: DesktopApi): Promise<void> {
+    const [listedRes, watchRes, statusRes] = await Promise.allSettled([
+      currentApi.listEvolutionProposals(),
+      currentApi.getEvolutionWatchSources(),
+      currentApi.getEvolutionWatchStatus
+        ? currentApi.getEvolutionWatchStatus()
+        : Promise.resolve<EvolutionWatchStatus>({ watching: false }),
+    ]);
+    if (!mountedRef.current) return;
+    const errors: string[] = [];
+    if (listedRes.status === "fulfilled") syncList(listedRes.value);
+    else errors.push(formatErrorMessage(listedRes.reason));
+    if (watchRes.status === "fulfilled") setWatchSources(watchRes.value);
+    else errors.push(formatErrorMessage(watchRes.reason));
+    if (statusRes.status === "fulfilled") {
+      setWatching(statusRes.value.watching);
+      setWatchProgress(statusRes.value.watching ? statusRes.value.progress : undefined);
+      if (!statusRes.value.watching) setCancellingWatch(false);
+    }
+    if (errors.length > 0) setError(errors.join("；"));
   }
 
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
     setBusy(true);
-    const unsubscribe = api.onEvolutionWatchProgress((progress) => {
-      if (!cancelled) setWatchProgress(progress);
+    const unsubProgress = api.onEvolutionWatchProgress((progress) => {
+      if (!cancelled && mountedRef.current) setWatchProgress(progress);
     });
-    void Promise.all([api.listEvolutionProposals(), api.getEvolutionWatchSources()])
-      .then(([listed, watchList]) => {
-        if (cancelled) return;
-        syncList(listed);
-        setWatchSources(watchList);
-      })
-      .catch((problem) => {
-        if (!cancelled) setError(formatErrorMessage(problem));
-      })
-      .finally(() => {
-        if (!cancelled) setBusy(false);
-      });
+    const unsubWatchState = api.onEvolutionWatchState?.((status) => {
+      if (cancelled || !mountedRef.current) return;
+      setWatching(status.watching);
+      setWatchProgress(status.watching ? status.progress : undefined);
+      if (!status.watching) {
+        setCancellingWatch(false);
+        void api.listEvolutionProposals().then((listed) => {
+          if (!cancelled) syncList(listed);
+        }).catch(() => {});
+        void api.getEvolutionWatchSources().then((list) => {
+          if (!cancelled && mountedRef.current) setWatchSources(list);
+        }).catch(() => {});
+      }
+    });
+    const unsubUpdated = api.onEvolutionUpdated?.(() => {
+      if (cancelled || !mountedRef.current) return;
+      void api.listEvolutionProposals().then((listed) => {
+        if (!cancelled) syncList(listed);
+      }).catch(() => {});
+    });
+    void refreshProposals(api).finally(() => {
+      if (!cancelled && mountedRef.current) setBusy(false);
+    });
     return () => {
       cancelled = true;
-      unsubscribe();
+      unsubProgress();
+      unsubWatchState?.();
+      unsubUpdated?.();
     };
   }, [api]);
 
   function openReviewDrawer(proposal: EvolutionProposal): void {
+    if (busy || watching) return;
     setActiveId(proposal.id);
     setDraftAnchor(proposal.anchorHeading);
     setDraftBefore(proposal.beforeSnippet ?? "");
     setDraftAfter(proposal.afterSnippet ?? "");
+    setConfirmDiscardDirty(false);
     setRejectingId(undefined);
     setRejectReason("");
-    setError("");
+    setDrawerError("");
+    setPreviewError("");
   }
 
-  function closeReviewDrawer(): void {
+  function closeReviewDrawer(forceDiscard = false): void {
     if (busy) return;
+    if (!forceDiscard && isDrawerDirty) {
+      setConfirmDiscardDirty(true);
+      return;
+    }
     setActiveId(undefined);
+    setConfirmDiscardDirty(false);
     setRejectingId(undefined);
     setRejectReason("");
+    setDrawerError("");
   }
 
-  async function runAction(action: () => Promise<void>): Promise<void> {
-    setBusy(true);
-    setError("");
+  async function runAction(
+    action: () => Promise<void>,
+    scope: "page" | "drawer" | "preview" | "watchModal" = "page",
+  ): Promise<void> {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setBusyState(true);
+    if (scope === "drawer") setDrawerError("");
+    else if (scope === "preview") setPreviewError("");
+    else if (scope === "watchModal") setWatchFormError("");
+    else setError("");
     setJustAppliedPath(undefined);
     try {
       await action();
     } catch (problem) {
-      setError(formatErrorMessage(problem));
+      if (!mountedRef.current) return;
+      const msg = formatErrorMessage(problem);
+      if (scope === "drawer") setDrawerError(msg);
+      else if (scope === "preview") setPreviewError(msg);
+      else if (scope === "watchModal") setWatchFormError(msg);
+      else setError(msg);
     } finally {
-      setBusy(false);
+      inFlightRef.current = false;
+      setBusyState(false);
     }
   }
 
@@ -327,18 +439,25 @@ export function EvolutionPage({
   }
 
   function handleWatchDocs(retrySourceIds?: string[]): void {
-    if (!api || watching) return;
+    if (!api || watching || inFlightRef.current) return;
     setWatching(true);
+    setCancellingWatch(false);
     setError("");
     setNotice("");
+    setFailedWatchResults([]);
     setJustAppliedPath(undefined);
-    setWatchProgress({ completed: 0, total: retrySourceIds?.length ?? watchSources.filter((s) => s.enabled).length, currentSourceName: "" });
+    setWatchProgress({
+      completed: 0,
+      total: retrySourceIds?.length ?? watchSources.filter((s) => s.enabled).length,
+      currentSourceName: "",
+    });
     void api
       .watchEvolutionDocs({
         sourceIds: retrySourceIds,
         workspaceRoot: workspaceSource?.root,
       })
       .then((summary) => {
+        if (!mountedRef.current) return;
         syncList(summary.list);
         setWatchSources(summary.watchSources);
         const failed = summary.results.filter((item) => item.status === "error");
@@ -360,17 +479,26 @@ export function EvolutionPage({
         }
       })
       .catch((problem) => {
-        setError(formatErrorMessage(problem));
+        if (mountedRef.current) setError(formatErrorMessage(problem));
       })
       .finally(() => {
-        setWatching(false);
-        setWatchProgress(undefined);
+        if (mountedRef.current) {
+          setWatching(false);
+          setCancellingWatch(false);
+          setWatchProgress(undefined);
+        }
       });
   }
 
   function handleCancelWatch(): void {
-    if (!api || !watching) return;
-    void api.cancelEvolutionWatch().catch((problem) => setError(formatErrorMessage(problem)));
+    if (!api || !watching || cancellingWatch) return;
+    setCancellingWatch(true);
+    void api.cancelEvolutionWatch().catch((problem) => {
+      if (mountedRef.current) {
+        setCancellingWatch(false);
+        setError(formatErrorMessage(problem));
+      }
+    });
   }
 
   function handleImportProposal(): void {
@@ -391,68 +519,141 @@ export function EvolutionPage({
     });
   }
 
-  function handleRecheck(proposal: EvolutionProposal): void {
+  function handleRecheck(proposal: EvolutionProposal, reopenPreview = false): void {
     if (!api || !selectedTargetSource) return;
-    void runAction(async () => {
-      setNotice("");
-      const result = await api.recheckEvolutionProposal(proposal.id, selectedTargetSource);
-      syncList(result.list);
-      if (result.conflicts.length === 0) {
-        setNotice("基线指纹与锚点核验通过，提案已恢复为待审状态");
-      } else {
-        setError(`仍存在 ${result.conflicts.length} 项冲突：${result.conflicts[0]}`);
-      }
-    });
+    const edited = buildDraftPatch(proposal);
+    void runAction(
+      async () => {
+        setNotice("");
+        const result = await api.recheckEvolutionProposal(proposal.id, selectedTargetSource, edited);
+        syncList(result.list);
+        if (mountedRef.current) {
+          setDraftAnchor(result.proposal.anchorHeading);
+          setDraftBefore(result.proposal.beforeSnippet ?? "");
+          setDraftAfter(result.proposal.afterSnippet ?? "");
+          setConfirmDiscardDirty(false);
+        }
+        if (result.conflicts.length === 0) {
+          if (reopenPreview) {
+            const nextPreview = await api.previewEvolutionProposal(proposal.id, selectedTargetSource, edited);
+            if (mountedRef.current) {
+              setShowFullDiff(false);
+              setPreview(nextPreview);
+              setPreviewError("");
+            }
+          } else {
+            setNotice("基线指纹与锚点核验通过，提案已恢复为待审状态");
+          }
+        } else {
+          const msg = `仍存在 ${result.conflicts.length} 项冲突：${result.conflicts[0]}`;
+          if (reopenPreview) setPreviewError(msg);
+          else setDrawerError(msg);
+        }
+      },
+      reopenPreview ? "preview" : "drawer",
+    );
   }
 
   function handlePreview(proposal: EvolutionProposal): void {
     if (!api || !selectedTargetSource) return;
-    void runAction(async () => {
-      setNotice("");
-      const nextPreview = await api.previewEvolutionProposal(proposal.id, selectedTargetSource, {
-        anchorHeading: draftAnchor,
-        beforeSnippet: proposal.operation === "add-item" ? undefined : draftBefore,
-        afterSnippet: draftAfter,
-      });
-      setShowFullDiff(false);
-      setPreview(nextPreview);
-    });
+    void runAction(
+      async () => {
+        setNotice("");
+        setPreviewError("");
+        const nextPreview = await api.previewEvolutionProposal(proposal.id, selectedTargetSource, buildDraftPatch(proposal));
+        if (mountedRef.current) {
+          setShowFullDiff(false);
+          setPreview(nextPreview);
+        }
+      },
+      "drawer",
+    );
   }
 
   function handleApplyPreview(): void {
     if (!api || !preview) return;
-    void runAction(async () => {
-      const applied = await api.applyEvolutionProposal(preview.token);
-      syncList(applied.list);
-      setPreview(undefined);
-      setActiveId(undefined);
-      setJustAppliedPath(applied.receipt.targetFilePath);
-      setNotice(`已原子写入并通过自动化校验：${applied.receipt.targetFilePath}`);
-    });
+    void runAction(
+      async () => {
+        const applied = await api.applyEvolutionProposal(preview.token);
+        syncList(applied.list);
+        if (mountedRef.current) {
+          setPreview(undefined);
+          setActiveId(undefined);
+          setConfirmDiscardDirty(false);
+          setJustAppliedPath(applied.receipt.targetFilePath);
+          setNotice(`已原子写入并通过自动化校验：${applied.receipt.targetFilePath}`);
+        }
+      },
+      "preview",
+    );
   }
 
   function handleReject(proposalId: string, reason?: string): void {
     if (!api) return;
-    void runAction(async () => {
-      const result = await api.rejectEvolutionProposal(proposalId, reason);
-      syncList(result.list);
-      setRejectingId(undefined);
-      setRejectReason("");
-      if (activeId === proposalId) setActiveId(undefined);
-      setNotice(`已驳回提案并记录去重指纹`);
-    });
+    void runAction(
+      async () => {
+        const result = await api.rejectEvolutionProposal(proposalId, reason);
+        syncList(result.list);
+        if (mountedRef.current) {
+          setRejectingId(undefined);
+          setRejectReason("");
+          setConfirmDiscardDirty(false);
+          if (activeId === proposalId) setActiveId(undefined);
+          setNotice("已驳回提案并记录去重指纹");
+        }
+      },
+      "drawer",
+    );
+  }
+
+  function handleReopen(proposalId: string): void {
+    if (!api?.reopenEvolutionProposal) return;
+    void runAction(
+      async () => {
+        const result = await api.reopenEvolutionProposal!(proposalId);
+        syncList(result.list);
+        if (mountedRef.current) {
+          setDraftAnchor(result.proposal.anchorHeading);
+          setDraftBefore(result.proposal.beforeSnippet ?? "");
+          setDraftAfter(result.proposal.afterSnippet ?? "");
+          setTab("pending");
+          setNotice("已重新打开提案并移除驳回指纹");
+        }
+      },
+      "drawer",
+    );
+  }
+
+  function handleArchive(proposalId: string): void {
+    if (!api?.archiveEvolutionProposal) return;
+    void runAction(
+      async () => {
+        const result = await api.archiveEvolutionProposal!(proposalId);
+        syncList(result.list);
+        if (mountedRef.current) {
+          setActiveId(undefined);
+          setNotice("已归档提案");
+        }
+      },
+      "drawer",
+    );
   }
 
   function handleExportPatch(proposal: EvolutionProposal): void {
     if (!api) return;
-    void runAction(async () => {
-      const exported = await api.exportEvolutionPatch(
-        proposal.id,
-        selectedTargetSource?.root ?? workspaceSource?.root,
-      );
-      if (!exported) return;
-      setNotice(`已导出增量补丁：${exported.path}`);
-    });
+    const isOpen = proposal.status === "pending" || proposal.status === "conflict" || proposal.status === "stale";
+    void runAction(
+      async () => {
+        const exported = await api.exportEvolutionPatch(
+          proposal.id,
+          selectedTargetSource?.root ?? workspaceSource?.root,
+          isOpen ? buildDraftPatch(proposal) : undefined,
+        );
+        if (!exported) return;
+        if (mountedRef.current) setNotice(`已导出增量补丁：${exported.path}`);
+      },
+      "drawer",
+    );
   }
 
   function openWatchSourcesModal(): void {
@@ -487,13 +688,15 @@ export function EvolutionPage({
       setWatchFormError("目标文件必须为 .md 文档");
       return;
     }
-    const baseId =
-      name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 32) || `watch-${Date.now().toString(36)}`;
-    const uniqueId = draftWatchSources.some((s) => s.id === baseId) ? `${baseId}-${Date.now().toString(36).slice(-4)}` : baseId;
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 32);
+    const baseId = slug.length >= 2 ? slug : `watch-${Date.now().toString(36)}`;
+    const uniqueId = draftWatchSources.some((s) => s.id === baseId)
+      ? `${baseId}-${Date.now().toString(36).slice(-4)}`
+      : baseId;
     const keywords = newWatchKeywords
       .split(/[,，\s]+/)
       .map((kw) => kw.trim())
@@ -522,18 +725,32 @@ export function EvolutionPage({
 
   function handleSaveWatchSources(): void {
     if (!api) return;
-    setWatchFormError("");
-    void runAction(async () => {
-      try {
+    void runAction(
+      async () => {
         const saved = await api.saveEvolutionWatchSources(draftWatchSources);
-        setWatchSources(saved);
-        setShowWatchModal(false);
-        setNotice(`已保存 ${saved.length} 个官方文档巡检源`);
-      } catch (problem) {
-        setWatchFormError(formatErrorMessage(problem));
-        throw problem;
-      }
-    });
+        if (mountedRef.current) {
+          setWatchSources(saved);
+          setShowWatchModal(false);
+          setNotice(`已保存 ${saved.length} 个官方文档巡检源`);
+        }
+      },
+      "watchModal",
+    );
+  }
+
+  function handleResetWatchSources(): void {
+    if (!api?.resetEvolutionWatchSources) return;
+    void runAction(
+      async () => {
+        const defaults = await api.resetEvolutionWatchSources!();
+        if (mountedRef.current) {
+          setWatchSources(defaults);
+          setDraftWatchSources(defaults.map((item) => ({ ...item, keywords: [...item.keywords] })));
+          setNotice(`已恢复 ${defaults.length} 个默认官方文档巡检源`);
+        }
+      },
+      "watchModal",
+    );
   }
 
   const filteredProposals = useMemo(() => {
@@ -563,6 +780,17 @@ export function EvolutionPage({
           {counts.badge > 0 && <span className="badge badge--brand">{counts.badge} 待处理</span>}
         </div>
         <div className="page-header-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={isActionLocked || !api}
+            onClick={() => {
+              if (api) void runAction(() => refreshProposals(api));
+            }}
+          >
+            <ArrowClockwise size={15} aria-hidden="true" />
+            {APP_COPY.actions.refresh}
+          </button>
           <button
             type="button"
             className="secondary-button"
@@ -602,23 +830,32 @@ export function EvolutionPage({
         </div>
       </div>
 
-      {watching && watchProgress && (
+      {watching && (
         <div className="evo-progress-bar" role="status" aria-live="polite">
           <div className="evo-progress-main">
             <span className="evo-progress-text">
-              正在巡检官方文档：{watchProgress.currentSourceName || "准备中…"}（{watchProgress.completed}/{watchProgress.total}）
+              正在巡检官方文档：{watchProgress?.currentSourceName || "准备中…"}（{watchProgress?.completed ?? 0}/{watchProgress?.total ?? 0}）
             </span>
             <div className="evo-progress-track">
               <div
                 className="evo-progress-fill"
                 style={{
-                  width: `${watchProgress.total > 0 ? Math.round((watchProgress.completed / watchProgress.total) * 100) : 10}%`,
+                  width: `${
+                    watchProgress && watchProgress.total > 0
+                      ? Math.round((watchProgress.completed / watchProgress.total) * 100)
+                      : 10
+                  }%`,
                 }}
               />
             </div>
           </div>
-          <button type="button" className="secondary-button" onClick={handleCancelWatch}>
-            {APP_COPY.actions.cancelWatch}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={cancellingWatch}
+            onClick={handleCancelWatch}
+          >
+            {cancellingWatch ? "正在取消…" : APP_COPY.actions.cancelWatch}
           </button>
         </div>
       )}
@@ -873,7 +1110,7 @@ export function EvolutionPage({
               <button
                 type="button"
                 className="icon-button"
-                onClick={closeReviewDrawer}
+                onClick={() => closeReviewDrawer()}
                 disabled={busy}
                 aria-label="关闭审阅抽屉"
               >
@@ -882,6 +1119,13 @@ export function EvolutionPage({
             </header>
 
             <div className="drawer-body">
+              {drawerError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={16} style={{ flex: "none", marginTop: 1 }} />
+                  <span>{drawerError}</span>
+                </div>
+              )}
+
               {(activeProposal.status === "conflict" || activeProposal.status === "stale") && (
                 <div className="issue-box" style={{ marginTop: 0 }}>
                   <WarningCircle size={16} style={{ flex: "none", marginTop: 1 }} />
@@ -931,7 +1175,7 @@ export function EvolutionPage({
 
               {(activeProposal.status === "pending" ||
                 activeProposal.status === "conflict" ||
-                activeProposal.status === "stale") && (
+                activeProposal.status === "stale") ? (
                 <>
                   <section className="drawer-section">
                     <span className="form-label-row">目标可写规则源</span>
@@ -943,12 +1187,16 @@ export function EvolutionPage({
                       options={targetSources.map((src) => ({
                         value: src.id,
                         label: src.name,
-                        description: src.readonly ? "内置只读源 · 仅可导出补丁" : src.root,
+                        description: src.readonly
+                          ? src.root
+                            ? "Git 同步缓存 · 仅可导出补丁（防止下次同步覆盖）"
+                            : "只读源 · 仅可导出补丁"
+                          : src.root,
                       }))}
                     />
                     {selectedTargetSource?.readonly && (
                       <div className="evo-readonly-hint">
-                        当前所选来源为只读，无法直接写入；可切换可写本地源或点击「导出补丁」。
+                        当前所选来源为只读（含内置官方源与 Git 同步镜像缓存），无法直接写入；可切换真实本地工作目录源或点击「导出补丁」。
                       </div>
                     )}
                   </section>
@@ -960,7 +1208,11 @@ export function EvolutionPage({
                         type="text"
                         className="form-input"
                         value={draftAnchor}
-                        onChange={(event) => setDraftAnchor(event.target.value)}
+                        onChange={(event) => {
+                          setDraftAnchor(event.target.value);
+                          setConfirmDiscardDirty(false);
+                          setDrawerError("");
+                        }}
                       />
                     </label>
                     {activeProposal.operation !== "add-item" && (
@@ -970,7 +1222,11 @@ export function EvolutionPage({
                           className="evo-code-textarea"
                           rows={3}
                           value={draftBefore}
-                          onChange={(event) => setDraftBefore(event.target.value)}
+                          onChange={(event) => {
+                            setDraftBefore(event.target.value);
+                            setConfirmDiscardDirty(false);
+                            setDrawerError("");
+                          }}
                         />
                       </label>
                     )}
@@ -982,7 +1238,11 @@ export function EvolutionPage({
                         className="evo-code-textarea"
                         rows={4}
                         value={draftAfter}
-                        onChange={(event) => setDraftAfter(event.target.value)}
+                        onChange={(event) => {
+                          setDraftAfter(event.target.value);
+                          setConfirmDiscardDirty(false);
+                          setDrawerError("");
+                        }}
                       />
                     </label>
                   </section>
@@ -1013,7 +1273,7 @@ export function EvolutionPage({
                         <button
                           type="button"
                           className="danger-button"
-                          disabled={busy}
+                          disabled={isActionLocked}
                           onClick={() => handleReject(activeProposal.id, rejectReason)}
                         >
                           {APP_COPY.actions.rejectProposal}
@@ -1022,6 +1282,28 @@ export function EvolutionPage({
                     </section>
                   )}
                 </>
+              ) : (
+                <section className="drawer-section">
+                  <span className="form-label-row">提案补丁内容（只读）</span>
+                  <div className="target-config-strip">
+                    <strong>{activeProposal.anchorHeading}</strong>
+                  </div>
+                  {activeProposal.beforeSnippet && (
+                    <pre className="skill-preview-body" style={{ marginTop: 8 }}>
+                      {`变更前：\n${activeProposal.beforeSnippet}`}
+                    </pre>
+                  )}
+                  {activeProposal.afterSnippet && (
+                    <pre className="skill-preview-body" style={{ marginTop: 8 }}>
+                      {`变更后：\n${activeProposal.afterSnippet}`}
+                    </pre>
+                  )}
+                  {activeProposal.status === "rejected" && activeProposal.rejectionReason && (
+                    <div className="evo-readonly-hint" style={{ marginTop: 8 }}>
+                      驳回原因：{activeProposal.rejectionReason}
+                    </div>
+                  )}
+                </section>
               )}
 
               {activeProposal.appliedReceipt && (
@@ -1035,6 +1317,31 @@ export function EvolutionPage({
                   </div>
                 </section>
               )}
+
+              {confirmDiscardDirty && (
+                <div className="alert-banner" role="alert">
+                  <div className="alert-banner-body">
+                    <WarningCircle size={16} style={{ flex: "none" }} />
+                    <span>存在未保存的补丁修改，确定放弃并关闭审阅抽屉？</span>
+                  </div>
+                  <div className="asset-actions">
+                    <button
+                      type="button"
+                      className="secondary-button btn-compact"
+                      onClick={() => setConfirmDiscardDirty(false)}
+                    >
+                      继续编辑
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-button btn-compact"
+                      onClick={() => closeReviewDrawer(true)}
+                    >
+                      放弃修改
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <footer className="drawer-footer evo-drawer-footer">
@@ -1045,16 +1352,39 @@ export function EvolutionPage({
                   <button
                     type="button"
                     className="danger-outline-button"
-                    disabled={busy}
+                    disabled={isActionLocked}
                     onClick={() => setRejectingId(activeProposal.id)}
                   >
                     {APP_COPY.actions.rejectProposal}
                   </button>
                 )}
+                {activeProposal.status === "rejected" && api?.reopenEvolutionProposal && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isActionLocked}
+                    onClick={() => handleReopen(activeProposal.id)}
+                  >
+                    <ArrowCounterClockwise size={14} aria-hidden="true" />
+                    {APP_COPY.actions.reopenProposal}
+                  </button>
+                )}
+                {(activeProposal.status === "approved" || activeProposal.status === "rejected") &&
+                  api?.archiveEvolutionProposal && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={isActionLocked}
+                      onClick={() => handleArchive(activeProposal.id)}
+                    >
+                      <Archive size={14} aria-hidden="true" />
+                      {APP_COPY.actions.archiveProposal}
+                    </button>
+                  )}
                 <button
                   type="button"
                   className="secondary-button"
-                  disabled={busy || !api}
+                  disabled={isActionLocked || !api}
                   onClick={() => handleExportPatch(activeProposal)}
                 >
                   <DownloadSimple size={14} aria-hidden="true" />
@@ -1062,28 +1392,28 @@ export function EvolutionPage({
                 </button>
               </div>
               <div className="evo-drawer-footer-right">
-                {(activeProposal.status === "conflict" || activeProposal.status === "stale") && (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={busy || !selectedTargetSource}
-                    onClick={() => handleRecheck(activeProposal)}
-                  >
-                    <ArrowClockwise size={14} aria-hidden="true" />
-                    {APP_COPY.actions.recheckProposal}
-                  </button>
-                )}
                 {(activeProposal.status === "pending" ||
                   activeProposal.status === "conflict" ||
                   activeProposal.status === "stale") && (
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={busy || !selectedTargetSource}
-                    onClick={() => handlePreview(activeProposal)}
-                  >
-                    {APP_COPY.actions.previewDelta}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={isActionLocked || !selectedTargetSource}
+                      onClick={() => handleRecheck(activeProposal)}
+                    >
+                      <ArrowClockwise size={14} aria-hidden="true" />
+                      {APP_COPY.actions.recheckProposal}
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={isActionLocked || !selectedTargetSource}
+                      onClick={() => handlePreview(activeProposal)}
+                    >
+                      {APP_COPY.actions.previewDelta}
+                    </button>
+                  </>
                 )}
               </div>
             </footer>
@@ -1131,6 +1461,13 @@ export function EvolutionPage({
                       </p>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {previewError && (
+                <div className="feedback-error" role="alert" style={{ marginTop: 0 }}>
+                  <WarningCircle size={17} style={{ flex: "none", marginTop: 1 }} />
+                  <span>{previewError}</span>
                 </div>
               )}
 
@@ -1202,10 +1539,24 @@ export function EvolutionPage({
                 type="button"
                 className="secondary-button"
                 disabled={busy}
-                onClick={() => setPreview(undefined)}
+                onClick={() => {
+                  setPreview(undefined);
+                  setPreviewError("");
+                }}
               >
                 {APP_COPY.actions.cancel}
               </button>
+              {preview.conflicts.length > 0 && activeProposal && !preview.targetSource.readonly && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => handleRecheck(activeProposal, true)}
+                >
+                  <ArrowClockwise size={14} aria-hidden="true" />
+                  重新检测并重预览
+                </button>
+              )}
               <button
                 type="button"
                 className="primary-button"
@@ -1355,23 +1706,37 @@ export function EvolutionPage({
               </div>
             </div>
 
-            <footer className="modal-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={busy}
-                onClick={() => setShowWatchModal(false)}
-              >
-                {APP_COPY.actions.cancel}
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                disabled={busy}
-                onClick={handleSaveWatchSources}
-              >
-                {busy ? APP_COPY.actions.processing : APP_COPY.actions.saveConfig}
-              </button>
+            <footer className="modal-actions modal-actions--spread">
+              <div>
+                {api?.resetEvolutionWatchSources && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={handleResetWatchSources}
+                  >
+                    {APP_COPY.actions.resetWatchSources}
+                  </button>
+                )}
+              </div>
+              <div className="modal-actions-group">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => setShowWatchModal(false)}
+                >
+                  {APP_COPY.actions.cancel}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={busy}
+                  onClick={handleSaveWatchSources}
+                >
+                  {busy ? APP_COPY.actions.processing : APP_COPY.actions.saveConfig}
+                </button>
+              </div>
             </footer>
           </section>
         </div>

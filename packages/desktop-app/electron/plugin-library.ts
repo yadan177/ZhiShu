@@ -28,7 +28,11 @@ const PRESET_ORDER = [
 ] as const;
 const MAX_FILES = 5000;
 const MAX_BYTES = 50 * 1024 * 1024;
+const OS_JUNK_FILES = new Set([".DS_Store", "Thumbs.db"]);
 const digest = (value: Uint8Array | string): string => createHash("sha256").update(value).digest("hex");
+export function computeCanonicalSourceDigest(files: Map<string, Buffer>): string {
+  return digest(JSON.stringify(sourceFiles(files)));
+}
 function safePath(value: string): boolean {
   return !!value && !value.includes("\\") && !value.includes("\0") && !value.split("/").some((part) => !part || part === "." || part === "..");
 }
@@ -43,6 +47,7 @@ async function collect(root: string): Promise<Map<string, Buffer>> {
   async function visit(relative: string): Promise<void> {
     const entries = await readdir(path.join(root, relative), { withFileTypes: true });
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (OS_JUNK_FILES.has(entry.name)) continue;
       const file = relative ? `${relative}/${entry.name}` : entry.name;
       if (!safePath(file)) throw new Error("源文件路径无效");
       const absolute = path.join(root, file);
@@ -211,12 +216,39 @@ export class PluginLibrary {
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return presets; throw error; }
     const imports: PluginImport[] = [];
     for (const entry of entries) {
-      if (entry.name.startsWith(".import-")) continue;
-      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("导入库包含未知文件或链接");
-      const loaded = await this.load(entry.name);
-      if (!presetKeys.has(loaded.key)) imports.push(loaded);
+      if (entry.name.startsWith(".import-") || OS_JUNK_FILES.has(entry.name)) continue;
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      try {
+        const loaded = await this.load(entry.name);
+        if (!presetKeys.has(loaded.key)) imports.push(loaded);
+      } catch {
+        // 单条损坏快照隔离跳过，避免阻断内置插件与其余正常资产加载。
+      }
     }
     return [...presets, ...imports.sort((a, b) => a.title.localeCompare(b.title))];
+  }
+  private async findPreset(key: string): Promise<{ receipt: PluginImport; root: string } | undefined> {
+    const match = /^([a-z0-9][a-z0-9-]{0,63})@\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.exec(key);
+    if (match?.[1]) {
+      const folderName = match[1];
+      for (const dir of this.presetDirs) {
+        const candidate = path.join(dir, folderName);
+        try {
+          const info = await lstat(candidate);
+          if (!info.isDirectory() || info.isSymbolicLink()) continue;
+          const inspection = await this.inspect(candidate);
+          if (inspection.key === key) {
+            return {
+              root: inspection.sourceRoot,
+              receipt: { schemaVersion: 1, ...inspection, preset: true, importedAt: "builtin" },
+            };
+          }
+        } catch {
+          // 目录不存在或非标准插件时继续回退扫描。
+        }
+      }
+    }
+    return (await this.scanPresets()).find((item) => item.receipt.key === key);
   }
   private async load(key: string): Promise<PluginImport> {
     const folder = this.folder(key);
@@ -235,7 +267,7 @@ export class PluginLibrary {
     return { schemaVersion: 1, ...source, importedAt: receipt.importedAt };
   }
   async snapshot(key: string): Promise<{ receipt: PluginImport; files: Map<string, Buffer> }> {
-    const preset = (await this.scanPresets()).find((item) => item.receipt.key === key);
+    const preset = await this.findPreset(key);
     if (preset) {
       const files = await collect(preset.root);
       if (digest(JSON.stringify(sourceFiles(files))) !== preset.receipt.sourceDigest) throw new Error("预设插件在读取时发生变化");
@@ -270,6 +302,8 @@ export class PluginLibrary {
     return this.serial(async () => {
       const inspection = await this.inspect(source);
       if (inspection.sourceDigest !== expectedDigest) throw new Error("源插件在预览后发生变化，请重新预览");
+      const presetKeys = new Set((await this.scanPresets()).map((item) => item.receipt.key));
+      if (presetKeys.has(inspection.key)) throw new Error("此版本已内置为官方预设，无需重复导入");
       await mkdir(this.directory, { recursive: true });
       const target = this.folder(inspection.key);
       try { await lstat(target); throw new Error("此版本已导入，不覆盖已有快照"); }
@@ -293,9 +327,8 @@ export class PluginLibrary {
   }
   async exportTraeWork(key: string, output: string): Promise<{ path: string; sha256: string; skillName: string; sourceDigest: string }> {
     if (typeof output !== "string" || !path.isAbsolute(output) || !output.endsWith(".zip")) throw new Error("请选择绝对路径的 .zip 文件");
-    const receipt = await this.load(key);
+    const { receipt, files: content } = await this.snapshot(key);
     if (receipt.delivery !== "traework-skill") throw new Error("此插件尚无 TraeWork 适配；不能忽略工具连接或 Hook 后直接安装");
-    const content = await collect(path.join(this.folder(key), "source"));
     if (digest(JSON.stringify(sourceFiles(content))) !== receipt.sourceDigest) throw new Error("导入快照在导出时发生变化");
     const archive: Record<string, Uint8Array> = Object.create(null);
     for (const [file, data] of content) archive[`source/${file}`] = data;

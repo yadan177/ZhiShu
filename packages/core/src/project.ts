@@ -104,6 +104,33 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  const maxAttempts = process.platform === "win32" ? 4 : 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt < maxAttempts - 1 && (code === "EPERM" || code === "EBUSY")) {
+        await new Promise((resolve) => setTimeout(resolve, 60 * 2 ** attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 async function loadOptionalLicense(sourceRoot: string): Promise<string | undefined> {
   const licensePath = path.join(sourceRoot, "LICENSE");
   let info;
@@ -156,7 +183,8 @@ function resolveInside(base: string, relativePath: string): string {
   }
   const resolvedBase = path.resolve(base);
   const resolved = path.resolve(resolvedBase, relativePath);
-  if (resolved !== resolvedBase && !resolved.startsWith(`${resolvedBase}${path.sep}`)) {
+  const basePrefix = resolvedBase.endsWith(path.sep) ? resolvedBase : `${resolvedBase}${path.sep}`;
+  if (resolved !== resolvedBase && !resolved.startsWith(basePrefix)) {
     throw new Error(`规则包路径越出目标目录：${relativePath}`);
   }
   return resolved;
@@ -268,7 +296,15 @@ export function recommendRulepacksForDetection(detection: DetectionResult): stri
 export async function listAvailableRulePacks(sourceRoot: string): Promise<RulePackManifest[]> {
   const resolvedSource = path.resolve(sourceRoot);
   const rulepacksRoot = path.join(resolvedSource, "rulepacks");
-  const rootInfo = await lstat(rulepacksRoot);
+  let rootInfo;
+  try {
+    rootInfo = await lstat(rulepacksRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("规则源缺少有效的 rulepacks 目录");
+    }
+    throw error;
+  }
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
     throw new Error("规则源缺少有效的 rulepacks 目录");
   }
@@ -283,7 +319,19 @@ export async function listAvailableRulePacks(sourceRoot: string): Promise<RulePa
       const info = await lstat(fullPath);
       if (info.isSymbolicLink()) continue;
       if (info.isDirectory()) {
-        if (await exists(path.join(fullPath, "pack.json"))) {
+        const packJsonPath = path.join(fullPath, "pack.json");
+        if (await exists(packJsonPath)) {
+          let rawParsed: unknown;
+          try {
+            rawParsed = JSON.parse(await readFile(packJsonPath, "utf8"));
+          } catch {
+            // 让 loadRulePack 抛出标准的 manifest 解析错误。
+            rawParsed = undefined;
+          }
+          // 跳过尚在草稿或已废弃状态的规则包，避免单个非 ready 包导致整个目录源不可用。
+          if (isRecord(rawParsed) && typeof rawParsed.status === "string" && rawParsed.status !== "ready") {
+            continue;
+          }
           const loaded = await loadRulePack(resolvedSource, nextRelative);
           manifests.push(loaded.manifest);
         } else {
@@ -483,7 +531,13 @@ async function inspectInstalledPackClosure(root: string, requested: string[], lo
   return issues;
 }
 
-async function prepareProject(root: string, config: ProjectConfig, adapter: TargetAdapter, snapshot?: SourceSnapshot, ownsWriteLock = false): Promise<PreparedProject> {
+export interface ProjectPlanOptions {
+  /** 允许在显式审查差异后覆盖漂移的受管文件、损坏锁文件或受损受控区块（仍严格保留 overrides.md 与拒绝符号链接）。 */
+  allowDriftRepair?: boolean;
+}
+
+async function prepareProject(root: string, config: ProjectConfig, adapter: TargetAdapter, snapshot?: SourceSnapshot, ownsWriteLock = false, options: ProjectPlanOptions = {}): Promise<PreparedProject> {
+  const allowDriftRepair = options.allowDriftRepair === true;
   assertTargetAdapter(adapter);
   assertSupportedConfig(config, adapter);
   const resolvedRoot = path.resolve(root);
@@ -528,21 +582,44 @@ async function prepareProject(root: string, config: ProjectConfig, adapter: Targ
   const entryExisted = !linkedControls.has(adapter.entryFile) && await exists(entryPath);
   const oldEntry = entryExisted ? await readFile(entryPath, "utf8") : "";
   const oldLockContent = !linkedControls.has(".agent-rules.lock.json") && (await exists(lockPath)) ? await readFile(lockPath, "utf8") : undefined;
-  const oldLock = oldLockContent ? parseProjectLock(oldLockContent) : undefined;
+  let oldLock: ProjectLock | undefined;
+  if (oldLockContent) {
+    if (allowDriftRepair) {
+      try {
+        oldLock = parseProjectLock(oldLockContent);
+      } catch {
+        oldLock = undefined;
+      }
+    } else {
+      oldLock = parseProjectLock(oldLockContent);
+    }
+  }
   const entryOrigin = oldLock ? oldLock.entryOrigin : entryExisted ? "existing" : "generated";
-  if (oldLock && snapshot) assertReleaseNotOlder(oldLock, snapshot);
+  if (oldLock && snapshot && !allowDriftRepair) assertReleaseNotOlder(oldLock, snapshot);
   const entries = Object.fromEntries(packs.map(({ manifest }) => [manifest.id, manifest.entry as string]));
   const block = adapter.renderManagedBlock(config, entries);
   if (!block.startsWith(adapter.blockStart) || !block.endsWith(adapter.blockEnd)) {
     throw new Error(`适配器 ${adapter.id} 生成的受控区块边界不合法`);
   }
-  const entryContent = mergeManagedBlock(oldEntry, block, adapter);
+  let entryContent: string;
+  try {
+    entryContent = mergeManagedBlock(oldEntry, block, adapter);
+  } catch (error) {
+    if (!allowDriftRepair) throw error;
+    // 修复受损受控区块：剥离残缺起止标记所在行后重新追加完整受控区块，保留其余用户内容。
+    const cleaned = oldEntry
+      .split(/\r?\n/)
+      .filter((line) => !line.includes(adapter.blockStart) && !line.includes(adapter.blockEnd))
+      .join("\n")
+      .trimEnd();
+    entryContent = cleaned ? `${cleaned}\n\n${block}\n` : `${block}\n`;
+  }
   const files = new Map<string, string>();
   const managedFiles: Record<string, string> = {};
   const license = await loadOptionalLicense(sourceRoot);
   if (license !== undefined) files.set(MANAGED_LICENSE, license);
-  if (oldLock) conflicts.push(...await inspectLockedManagedFiles(resolvedRoot, oldLock));
-  if (!oldLock && oldEntry.includes(adapter.blockStart)) {
+  if (oldLock && !allowDriftRepair) conflicts.push(...await inspectLockedManagedFiles(resolvedRoot, oldLock));
+  if (!oldLock && !allowDriftRepair && oldEntry.includes(adapter.blockStart)) {
     conflicts.push({ code: "unknown-managed-block", message: `${adapter.entryFile} 已含受控区块，但缺少可验证的锁文件` });
   }
 
@@ -586,17 +663,17 @@ async function prepareProject(root: string, config: ProjectConfig, adapter: Targ
     const before = (await exists(absolutePath)) ? await readFile(absolutePath, "utf8") : undefined;
     const after = files.get(relativePath);
     const recorded = oldLock?.managedFiles[relativePath];
-    if (recorded && (before === undefined || digest(before) !== recorded)) {
+    if (!allowDriftRepair && recorded && (before === undefined || digest(before) !== recorded)) {
       conflicts.push({ code: "managed-file-drift", message: `受管文件已发生漂移：${relativePath}` });
     }
-    if (!recorded && before !== undefined && after !== undefined) {
+    if (!allowDriftRepair && !recorded && before !== undefined && after !== undefined) {
       conflicts.push({ code: "unknown-file-collision", message: `拒绝接管已有文件：${relativePath}` });
     }
     if (before !== after) {
       changes.push({ path: relativePath, action: before === undefined ? "add" : after === undefined ? "remove" : "modify", before, after });
     }
   }
-  if (oldLock?.managedBlockDigest) {
+  if (!allowDriftRepair && oldLock?.managedBlockDigest) {
     const oldBlock = extractManagedBlock(oldEntry, adapter) ?? "";
     if (digest(oldBlock) !== oldLock.managedBlockDigest) {
       conflicts.push({ code: "managed-block-drift", message: `${adapter.entryFile} 受控区块已被手工修改` });
@@ -622,19 +699,19 @@ async function prepareProject(root: string, config: ProjectConfig, adapter: Targ
   return { plan: { changes, conflicts, from: oldLock?.rulepacks ?? {}, to: lock.rulepacks }, files, entryContent, lock, oldLock };
 }
 
-export async function planProject(root: string, config: ProjectConfig, adapter: TargetAdapter, snapshot?: SourceSnapshot): Promise<ProjectPlan> {
-  return (await prepareProject(root, config, adapter, snapshot)).plan;
+export async function planProject(root: string, config: ProjectConfig, adapter: TargetAdapter, snapshot?: SourceSnapshot, options?: ProjectPlanOptions): Promise<ProjectPlan> {
+  return (await prepareProject(root, config, adapter, snapshot, false, options)).plan;
 }
 
-async function applyProjectUnlocked(root: string, config: ProjectConfig, adapter: TargetAdapter, configContent?: string, snapshot?: SourceSnapshot, expectedPlan?: ProjectPlan, expectedOriginalConfigContent?: string): Promise<ProjectLock> {
+async function applyProjectUnlocked(root: string, config: ProjectConfig, adapter: TargetAdapter, configContent?: string, snapshot?: SourceSnapshot, expectedPlan?: ProjectPlan, expectedOriginalConfigContent?: string, options?: ProjectPlanOptions): Promise<ProjectLock> {
   const resolvedRoot = path.resolve(root);
   if (expectedOriginalConfigContent !== undefined && await readFile(path.join(resolvedRoot, "agent-rules.yaml"), "utf8") !== expectedOriginalConfigContent) {
     throw new Error("项目配置在预览后发生变化；请重新预览差异");
   }
-  if (configContent === undefined && !isDeepStrictEqual(await loadProjectConfig(resolvedRoot), config)) {
+  if (configContent === undefined && !options?.allowDriftRepair && !isDeepStrictEqual(await loadProjectConfig(resolvedRoot), config)) {
     throw new Error("项目配置在预览后发生变化；请重新预览差异");
   }
-  const prepared = await prepareProject(resolvedRoot, config, adapter, snapshot, true);
+  const prepared = await prepareProject(resolvedRoot, config, adapter, snapshot, true, options);
   if (prepared.plan.conflicts.length) {
     throw new Error(prepared.plan.conflicts.map((issue) => `[${issue.code}] ${issue.message}`).join("\n"));
   }
@@ -677,10 +754,10 @@ async function applyProjectUnlocked(root: string, config: ProjectConfig, adapter
       snapshots: Object.fromEntries([...snapshots].map(([filePath, content]) => [path.basename(filePath), content ?? null])),
     }), "utf8");
     if (await exists(rulesDirectory)) {
-      await rename(rulesDirectory, backup);
+      await renameWithRetry(rulesDirectory, backup);
       movedRules = true;
     }
-    await rename(staging, rulesDirectory);
+    await renameWithRetry(staging, rulesDirectory);
     installedRules = true;
     await writeFile(entryPath, prepared.entryContent, "utf8");
     await writeFile(lockPath, `${JSON.stringify(prepared.lock, null, 2)}\n`, "utf8");
@@ -694,7 +771,7 @@ async function applyProjectUnlocked(root: string, config: ProjectConfig, adapter
         else await writeFile(filePath, content, "utf8");
       }
       if (installedRules) await rm(rulesDirectory, { recursive: true, force: true });
-      if (movedRules) await rename(backup, rulesDirectory);
+      if (movedRules) await renameWithRetry(backup, rulesDirectory);
       completed = true;
     } catch (rollbackError) {
       throw new Error(`应用失败且回滚未完成；恢复副本保留在 ${transaction}：${String(rollbackError)}`, { cause: error });
@@ -705,17 +782,32 @@ async function applyProjectUnlocked(root: string, config: ProjectConfig, adapter
   }
 }
 
-async function withProjectWriteLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+async function withProjectWriteLock<T>(root: string, operation: () => Promise<T>, options: { reclaimStaleLock?: boolean } = {}): Promise<T> {
   const resolvedRoot = path.resolve(root);
   const lockPath = path.join(resolvedRoot, OPERATION_LOCK);
-  const token = randomUUID();
-  try {
-    await writeFile(lockPath, token, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(`已有规则写入操作锁 ${OPERATION_LOCK}；不会并发修改项目。若之前的进程已停止，请人工确认后处理该文件`);
+  const payload = JSON.stringify({ token: randomUUID(), pid: process.pid, startedAt: new Date().toISOString() });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await writeFile(lockPath, payload, { flag: "wx", mode: 0o600 });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        if (attempt === 0 && options.reclaimStaleLock) {
+          try {
+            const raw = await readFile(lockPath, "utf8");
+            const parsed: unknown = JSON.parse(raw);
+            if (isRecord(parsed) && typeof parsed.pid === "number" && !isPidAlive(parsed.pid)) {
+              await rm(lockPath, { force: true });
+              continue;
+            }
+          } catch {
+            // 非结构化或无法解析的外部锁文件不自动抢占，继续按冲突拒绝。
+          }
+        }
+        throw new Error(`已有规则写入操作锁 ${OPERATION_LOCK}；不会并发修改项目。若之前的进程已停止，请人工确认后处理该文件`);
+      }
+      throw error;
     }
-    throw error;
   }
   try {
     return await operation();
@@ -726,15 +818,15 @@ async function withProjectWriteLock<T>(root: string, operation: () => Promise<T>
     } catch {
       throw new Error(`规则写入操作锁 ${OPERATION_LOCK} 已消失；请检查项目状态`);
     }
-    if (current !== token) {
+    if (current !== payload) {
       throw new Error(`规则写入操作锁 ${OPERATION_LOCK} 已变化；保留现场，请人工检查项目状态`);
     }
     await rm(lockPath);
   }
 }
 
-export async function applyProject(root: string, config: ProjectConfig, adapter: TargetAdapter, configContent?: string, snapshot?: SourceSnapshot, expectedPlan?: ProjectPlan, expectedOriginalConfigContent?: string): Promise<ProjectLock> {
-  return withProjectWriteLock(root, () => applyProjectUnlocked(root, config, adapter, configContent, snapshot, expectedPlan, expectedOriginalConfigContent));
+export async function applyProject(root: string, config: ProjectConfig, adapter: TargetAdapter, configContent?: string, snapshot?: SourceSnapshot, expectedPlan?: ProjectPlan, expectedOriginalConfigContent?: string, options?: ProjectPlanOptions): Promise<ProjectLock> {
+  return withProjectWriteLock(root, () => applyProjectUnlocked(root, config, adapter, configContent, snapshot, expectedPlan, expectedOriginalConfigContent, options));
 }
 
 export async function listRetainedRulePaths(root: string, managedFiles: Record<string, string>): Promise<string[]> {
@@ -862,6 +954,195 @@ export async function applyUninstall(root: string, adapter: TargetAdapter, expec
   return withProjectWriteLock(root, () => applyUninstallUnlocked(root, adapter, expectedPlan));
 }
 
+async function planForceUninstallInternal(root: string, adapter: TargetAdapter, ownsWriteLock = false): Promise<UninstallPlan> {
+  assertTargetAdapter(adapter);
+  const resolvedRoot = path.resolve(root);
+  const conflicts: ValidationIssue[] = [];
+  if (!ownsWriteLock && await exists(path.join(resolvedRoot, OPERATION_LOCK))) {
+    conflicts.push({ code: "operation-in-progress", message: `检测到规则写入操作锁 ${OPERATION_LOCK}；请等待当前操作结束，或确认进程已停止后人工检查` });
+  }
+  const interrupted = await listInterruptedTransactions(resolvedRoot);
+  if (interrupted.length) {
+    conflicts.push({ code: "interrupted-transaction", message: `检测到 ${interrupted.length} 个未完成的规则更新事务；请先恢复中断事务` });
+  }
+  for (const controlPath of [adapter.entryFile, ".agent-rules.lock.json", "agent-rules.yaml", ".agent-rules"]) {
+    if (await hasSymlinkAncestor(resolvedRoot, controlPath)) {
+      conflicts.push({ code: "symlink-path", message: `控制文件路径包含符号链接：${controlPath}` });
+    }
+  }
+  if (conflicts.length) return { changes: [], retainedPaths: [], conflicts };
+
+  let overridesRelative = ".agent-rules/overrides.md";
+  try {
+    const cfg = await loadProjectConfig(resolvedRoot);
+    if (typeof cfg.project?.overrides === "string" && cfg.project.overrides.startsWith(".agent-rules/")) {
+      overridesRelative = toPortablePath(cfg.project.overrides);
+    }
+  } catch {
+    // 配置损坏时默认保留 .agent-rules/overrides.md
+  }
+
+  let lock: ProjectLock | undefined;
+  try {
+    lock = await loadProjectLock(resolvedRoot);
+  } catch {
+    lock = undefined;
+  }
+
+  const changes: ProjectChange[] = [];
+  const managedToRemove = new Set<string>();
+  const retainedPaths: string[] = [];
+  const rulesDir = path.join(resolvedRoot, ".agent-rules");
+  if (await exists(rulesDir) && (await lstat(rulesDir)).isDirectory()) {
+    const allRuleFiles: string[] = [];
+    const visit = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(path.join(resolvedRoot, dir), { withFileTypes: true })) {
+        const rel = path.posix.join(dir, entry.name);
+        if (await hasSymlinkAncestor(resolvedRoot, rel)) {
+          conflicts.push({ code: "symlink-path", message: `受管目录包含符号链接：${rel}` });
+          continue;
+        }
+        if (entry.isDirectory()) await visit(rel);
+        else allRuleFiles.push(rel);
+      }
+    };
+    await visit(".agent-rules");
+    if (conflicts.length) return { changes: [], retainedPaths: [], conflicts };
+
+    const packRootDirs = new Set<string>();
+    for (const rel of allRuleFiles) {
+      if (rel.endsWith("/pack.json")) packRootDirs.add(path.posix.dirname(rel));
+    }
+    for (const rel of allRuleFiles.sort()) {
+      if (rel === overridesRelative) {
+        retainedPaths.push(rel);
+        continue;
+      }
+      const inLock = Boolean(lock && Object.hasOwn(lock.managedFiles, rel));
+      const inPackDir = rel === MANAGED_LICENSE || [...packRootDirs].some((dir) => rel.startsWith(`${dir}/`));
+      if (inLock || (!lock && inPackDir)) {
+        managedToRemove.add(rel);
+        changes.push({ path: rel, action: "remove", before: await readFile(resolveInside(resolvedRoot, rel), "utf8") });
+      } else {
+        retainedPaths.push(rel);
+      }
+    }
+  }
+
+  const entryPath = path.join(resolvedRoot, adapter.entryFile);
+  if (await exists(entryPath)) {
+    const entryContent = await readFile(entryPath, "utf8");
+    const block = extractManagedBlock(entryContent, adapter);
+    if (block) {
+      const start = entryContent.indexOf(block);
+      const prefix = entryContent.slice(0, start);
+      const suffix = entryContent.slice(start + block.length);
+      let entryAfter: string | undefined;
+      if (lock?.entryOrigin === "existing") {
+        if (entryContent === `${block}\n`) entryAfter = "";
+        else if (prefix.endsWith("\n\n") && suffix.startsWith("\n")) entryAfter = `${prefix.slice(0, -2)}${suffix.slice(1)}`;
+        else entryAfter = `${prefix}${suffix}`;
+      } else if (lock?.entryOrigin === "generated") {
+        entryAfter = `${prefix}${suffix.startsWith("\n") ? suffix.slice(1) : suffix}` || undefined;
+      } else if (entryContent !== `${block}\n`) {
+        entryAfter = `${prefix.endsWith("\n\n") ? prefix.slice(0, -1) : prefix}${suffix.startsWith("\n") ? suffix.slice(1) : suffix}`;
+      }
+      changes.push({ path: adapter.entryFile, action: entryAfter === undefined ? "remove" : "modify", before: entryContent, after: entryAfter });
+    }
+  }
+
+  for (const control of ["agent-rules.yaml", ".agent-rules.lock.json"]) {
+    const abs = path.join(resolvedRoot, control);
+    if (await exists(abs)) {
+      changes.push({ path: control, action: "remove", before: await readFile(abs, "utf8") });
+    }
+  }
+
+  return { changes, retainedPaths: retainedPaths.sort(), conflicts: [] };
+}
+
+/** 异常态强制清理受管文件与控制文件预览：始终保留 overrides.md 与非受管用户文件，绝不跟随符号链接。 */
+export async function planForceUninstall(root: string, adapter: TargetAdapter): Promise<UninstallPlan> {
+  return planForceUninstallInternal(root, adapter);
+}
+
+export async function applyForceUninstall(root: string, adapter: TargetAdapter, expectedPlan?: UninstallPlan): Promise<void> {
+  return withProjectWriteLock(root, async () => {
+    const resolvedRoot = path.resolve(root);
+    const plan = await planForceUninstallInternal(resolvedRoot, adapter, true);
+    if (plan.conflicts.length) throw new Error(plan.conflicts.map((issue) => `[${issue.code}] ${issue.message}`).join("\n"));
+    if (expectedPlan && !isDeepStrictEqual(plan, expectedPlan)) {
+      throw new Error("预览后项目文件发生变化；拒绝应用未经审查的强制卸载差异，请重新预览");
+    }
+
+    const rulesDirectory = path.join(resolvedRoot, ".agent-rules");
+    const hasRulesDir = await exists(rulesDirectory);
+    const transaction = await mkdtemp(path.join(resolvedRoot, TRANSACTION_PREFIX));
+    const staging = path.join(transaction, "staging");
+    const backup = path.join(transaction, "backup");
+    const entryPath = path.join(resolvedRoot, adapter.entryFile);
+    const lockPath = path.join(resolvedRoot, ".agent-rules.lock.json");
+    const configPath = path.join(resolvedRoot, "agent-rules.yaml");
+    const snapshots = new Map<string, string | undefined>();
+    let journalWritten = false;
+    let movedRules = false;
+    let installedRules = false;
+    let completed = false;
+    try {
+      if (hasRulesDir) {
+        await cp(rulesDirectory, staging, { recursive: true });
+        for (const change of plan.changes) {
+          if (change.path.startsWith(".agent-rules/")) {
+            const relativePath = change.path.slice(".agent-rules/".length);
+            await rm(resolveInside(staging, relativePath), { force: true });
+            await pruneEmptyManagedDirectories(staging, relativePath);
+          }
+        }
+      }
+      for (const filePath of [entryPath, lockPath, configPath]) {
+        snapshots.set(filePath, (await exists(filePath)) ? await readFile(filePath, "utf8") : undefined);
+      }
+      await writeFile(path.join(transaction, "journal.json"), JSON.stringify({
+        schemaVersion: 1,
+        hadRules: hasRulesDir,
+        snapshots: Object.fromEntries([...snapshots].map(([filePath, content]) => [path.basename(filePath), content ?? null])),
+      }), "utf8");
+      journalWritten = true;
+      if (hasRulesDir) {
+        await renameWithRetry(rulesDirectory, backup);
+        movedRules = true;
+        if ((await readdir(staging)).length > 0) {
+          await renameWithRetry(staging, rulesDirectory);
+          installedRules = true;
+        }
+      }
+      const entryChange = plan.changes.find((change) => change.path === adapter.entryFile);
+      if (entryChange) {
+        if (entryChange.after === undefined) await rm(entryPath, { force: true });
+        else await writeFile(entryPath, entryChange.after, "utf8");
+      }
+      await rm(lockPath, { force: true });
+      await rm(configPath, { force: true });
+      completed = true;
+    } catch (error) {
+      try {
+        for (const [filePath, content] of snapshots) {
+          if (content === undefined) await rm(filePath, { force: true });
+          else await writeFile(filePath, content, "utf8");
+        }
+        if (installedRules) await rm(rulesDirectory, { recursive: true, force: true });
+        if (movedRules) await renameWithRetry(backup, rulesDirectory);
+        completed = true;
+      } catch (rollbackError) {
+        throw new Error(`强制卸载失败且回滚未完成；恢复副本保留在 ${transaction}：${String(rollbackError)}`, { cause: error });
+      }
+      throw error;
+    } finally {
+      if (completed || !journalWritten) await rm(transaction, { recursive: true, force: true });
+    }
+  });
+}
+
 export async function listInterruptedTransactions(root: string): Promise<string[]> {
   const resolvedRoot = path.resolve(root);
   let entries;
@@ -951,7 +1232,7 @@ async function recoverInterruptedProjectUnlocked(root: string, adapter: TargetAd
 }
 
 export async function recoverInterruptedProject(root: string, adapter: TargetAdapter): Promise<string | undefined> {
-  return withProjectWriteLock(root, () => recoverInterruptedProjectUnlocked(root, adapter));
+  return withProjectWriteLock(root, () => recoverInterruptedProjectUnlocked(root, adapter), { reclaimStaleLock: true });
 }
 
 export async function initializeProject(

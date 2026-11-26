@@ -13,6 +13,8 @@ import {
   applyProject,
   planUninstall,
   applyUninstall,
+  planForceUninstall,
+  applyForceUninstall,
   loadProjectConfig,
   listInterruptedTransactions,
   recoverInterruptedProject,
@@ -888,5 +890,53 @@ test("损坏的恢复记录在移动规则目录前被拒绝", async () => {
       assert.equal(await readFile(path.join(target, ".agent-rules", "common", "entry.md"), "utf8"), originalRule);
       await assert.rejects(readFile(path.join(target, ".agent-rules.operation.lock"), "utf8"), /ENOENT/);
     }
+  });
+});
+
+test("结构化死进程写锁可被中断恢复自动接管，且支持覆盖修复与强制卸载保留 overrides.md", async () => {
+  await withTempProject(async (root) => {
+    const source = path.join(root, "source");
+    const target = path.join(root, "target");
+    await mkdir(target);
+    await writePack(source, "common", "entry.md");
+    await initializeProject(target, testAdapter, source);
+    await writeFile(path.join(target, ".agent-rules", "overrides.md"), "# 团队本地覆盖\n");
+
+    // 1. 模拟崩溃残留：同时存在已退出 PID 的 JSON 写锁与未完成事务目录
+    const transaction = path.join(target, ".agent-rules.transaction-deadlock");
+    await mkdir(transaction);
+    const snapshots = {
+      [testAdapter.entryFile]: await readFile(path.join(target, testAdapter.entryFile), "utf8"),
+      ".agent-rules.lock.json": await readFile(path.join(target, ".agent-rules.lock.json"), "utf8"),
+    };
+    await writeFile(path.join(transaction, "journal.json"), JSON.stringify({ schemaVersion: 1, hadRules: true, snapshots }));
+    await rename(path.join(target, ".agent-rules"), path.join(transaction, "backup"));
+    await writeFile(
+      path.join(target, ".agent-rules.operation.lock"),
+      JSON.stringify({ token: "dead-lock", pid: 9999999, startedAt: new Date(0).toISOString() }),
+    );
+    const recovered = await recoverInterruptedProject(target, testAdapter);
+    assert.ok(recovered?.includes(".agent-rules.recovered-"));
+    assert.deepEqual(await validateProject(target, testAdapter), { valid: true, issues: [] });
+
+    // 2. 受管文件漂移后通过 allowDriftRepair 覆盖修复，且保留 overrides.md
+    await writeFile(path.join(target, ".agent-rules", "common", "entry.md"), "# 被误改的规则\n");
+    const cfg = await loadProjectConfig(target);
+    const repairPlan = await planProject(target, cfg, testAdapter, undefined, { allowDriftRepair: true });
+    assert.deepEqual(repairPlan.conflicts, []);
+    await applyProject(target, cfg, testAdapter, undefined, undefined, repairPlan, undefined, { allowDriftRepair: true });
+    assert.equal(await readFile(path.join(target, ".agent-rules", "common", "entry.md"), "utf8"), "# common\n");
+    assert.equal(await readFile(path.join(target, ".agent-rules", "overrides.md"), "utf8"), "# 团队本地覆盖\n");
+
+    // 3. 破坏配置和受管文件后强制卸载，清理受管文件并保留 overrides.md
+    await writeFile(path.join(target, "agent-rules.yaml"), "::bad-yaml::[\n");
+    await writeFile(path.join(target, ".agent-rules", "common", "entry.md"), "drifted");
+    const forcePlan = await planForceUninstall(target, testAdapter);
+    assert.deepEqual(forcePlan.conflicts, []);
+    assert.ok(forcePlan.changes.length > 0);
+    await applyForceUninstall(target, testAdapter, forcePlan);
+    assert.equal(await readFile(path.join(target, ".agent-rules", "overrides.md"), "utf8"), "# 团队本地覆盖\n");
+    await assert.rejects(readFile(path.join(target, ".agent-rules.lock.json"), "utf8"), /ENOENT/);
+    await assert.rejects(readFile(path.join(target, "agent-rules.yaml"), "utf8"), /ENOENT/);
   });
 });

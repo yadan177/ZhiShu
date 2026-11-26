@@ -2475,3 +2475,9 @@ h3 {
 .evo-watch-span2 {
   grid-column: span 2;
 }
+
+.software-toast.is-info {
+  border-color: var(--color-status-success-bd);
+  background: var(--color-status-success-bg);
+  color: var(--color-status-success-fg);
+}

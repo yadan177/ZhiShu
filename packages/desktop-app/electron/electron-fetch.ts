@@ -1,14 +1,14 @@
 import { app, net } from "electron";
-import { createResilientFetcher, formatGitHubNetworkError } from "./resilient-fetch.ts";
+import { createResilientFetcher, formatGitHubNetworkError, formatNetworkError } from "./resilient-fetch.ts";
 
-export { createResilientFetcher, formatGitHubNetworkError };
+export { createResilientFetcher, formatGitHubNetworkError, formatNetworkError };
 
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
 /**
  * Electron 44 的 `net.fetch(..., { redirect: "manual" })` 在遇到 3xx 时会直接抛出
  * `Redirect was cancelled` 而不返回 Location 头；手动重定向场景使用 `net.request`
- * 保持 Chromium 系统代理/PAC 能力，同时向上层暴露真实的 3xx 状态与 Location 供白名单校验。
+ * 保持 Chromium 系统代理/PAC 能力，同时暴露真实 3xx Location、支持背压与流中途报错传播。
  */
 function electronManualRedirectFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -28,10 +28,23 @@ function electronManualRedirectFetch(input: Parameters<typeof fetch>[0], init?: 
     let settled = false;
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
     let streamClosed = false;
+    let activeRes: Electron.IncomingMessage | undefined;
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
 
     const cleanup = () => {
       signal?.removeEventListener("abort", onAbort);
+    };
+
+    const failStream = (err: Error) => {
+      cleanup();
+      if (streamController && !streamClosed) {
+        streamClosed = true;
+        try {
+          streamController.error(err);
+        } catch {
+          // 流已关闭或错误时忽略二次通知。
+        }
+      }
     };
 
     const abortError = (): Error => {
@@ -49,14 +62,7 @@ function electronManualRedirectFetch(input: Parameters<typeof fetch>[0], init?: 
         reject(abortError());
         return;
       }
-      if (streamController && !streamClosed) {
-        streamClosed = true;
-        try {
-          streamController.error(abortError());
-        } catch {
-          // 流已关闭或错误时忽略二次通知。
-        }
-      }
+      failStream(abortError());
     };
 
     if (signal) {
@@ -93,6 +99,7 @@ function electronManualRedirectFetch(input: Parameters<typeof fetch>[0], init?: 
     req.on("response", (res) => {
       if (settled) return;
       settled = true;
+      activeRes = res;
       const headers = toHeaders(res.headers);
       if (NULL_BODY_STATUSES.has(res.statusCode)) {
         cleanup();
@@ -103,7 +110,11 @@ function electronManualRedirectFetch(input: Parameters<typeof fetch>[0], init?: 
         start(controller) {
           streamController = controller;
           res.on("data", (chunk: Buffer) => {
-            if (!streamClosed) controller.enqueue(new Uint8Array(chunk));
+            if (streamClosed) return;
+            controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+            if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+              (res as unknown as { pause?: () => void }).pause?.();
+            }
           });
           res.on("end", () => {
             cleanup();
@@ -113,19 +124,14 @@ function electronManualRedirectFetch(input: Parameters<typeof fetch>[0], init?: 
             }
           });
           res.on("aborted", () => {
-            cleanup();
-            if (!streamClosed) {
-              streamClosed = true;
-              controller.error(new Error("ERR_CONNECTION_CLOSED"));
-            }
+            failStream(new Error("ERR_CONNECTION_CLOSED"));
           });
           res.on("error", (err: Error) => {
-            cleanup();
-            if (!streamClosed) {
-              streamClosed = true;
-              controller.error(err);
-            }
+            failStream(err);
           });
+        },
+        pull() {
+          (activeRes as unknown as { resume?: () => void } | undefined)?.resume?.();
         },
         cancel() {
           streamClosed = true;
@@ -137,18 +143,30 @@ function electronManualRedirectFetch(input: Parameters<typeof fetch>[0], init?: 
     });
 
     req.on("error", (err: Error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(err);
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(err);
+        return;
+      }
+      failStream(err);
+    });
+
+    req.on("abort", () => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(new Error("ERR_CONNECTION_ABORTED"));
+        return;
+      }
+      failStream(new Error("ERR_CONNECTION_ABORTED"));
     });
 
     req.end();
   });
 }
 
-/** 在 Electron 主进程优先使用 Chromium 网络栈（自动走系统代理与系统证书），非 Electron 环境回退 Node fetch。 */
-export const electronFetch: typeof fetch = createResilientFetcher((input, init) => {
+function rawElectronFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
   if (typeof app?.isReady === "function" && app.isReady()) {
     if (init?.redirect === "manual" && typeof net?.request === "function") {
       return electronManualRedirectFetch(input, init);
@@ -158,4 +176,10 @@ export const electronFetch: typeof fetch = createResilientFetcher((input, init) 
     }
   }
   return fetch(input, init);
-});
+}
+
+/** GitHub 链路专用 Chromium 网络栈 fetcher（自动走系统代理与系统证书）。 */
+export const electronFetch: typeof fetch = createResilientFetcher(rawElectronFetch, 600, "GitHub");
+
+/** 通用外部文档巡检 Chromium 网络栈 fetcher（避免非 GitHub 目标报 GitHub 提示）。 */
+export const electronGenericFetch: typeof fetch = createResilientFetcher(rawElectronFetch, 600, "远程文档服务");

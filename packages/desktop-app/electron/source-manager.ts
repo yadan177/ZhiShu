@@ -76,15 +76,40 @@ async function atomicWriteJson(filePath: string, payload: unknown): Promise<void
   }
 }
 
+export interface UpdateSourceInput {
+  id: string;
+  name?: string;
+  branch?: string;
+  requiredRulepacks?: string[];
+  token?: string;
+  clearToken?: boolean;
+}
+
+const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/;
+
+function assertValidBranch(branch: string): void {
+  if (!BRANCH_PATTERN.test(branch) || branch.includes("..")) {
+    throw new Error("Git 分支名称不合法");
+  }
+}
+
+function assertValidToken(token: string): void {
+  if (/[\r\n\0]/.test(token)) {
+    throw new Error("访问令牌不能包含换行或空字符");
+  }
+}
+
 function gitEnvWithOptionalToken(location: string, token?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_TERMINAL_PROMPT: "0",
   };
-  // 仅对 HTTPS 地址通过环境变量临时注入 Header，绝不落盘至 .git/config 或命令行参数。
+  // 仅对 HTTPS 地址通过环境变量临时按精确源域注入 Header，防止跨站重定向泄露令牌且绝不落盘至 .git/config。
   if (token && location.startsWith("https://")) {
+    assertValidToken(token);
+    const origin = new URL(location).origin;
     env.GIT_CONFIG_COUNT = "1";
-    env.GIT_CONFIG_KEY_0 = "http.extraHeader";
+    env.GIT_CONFIG_KEY_0 = `http.${origin}.extraHeader`;
     env.GIT_CONFIG_VALUE_0 = `Authorization: Bearer ${token}`;
   }
   return env;
@@ -164,8 +189,13 @@ export class SourceManager {
   async add(input: AddSourceInput): Promise<AssetSourceRecord[]> {
     return this.serialized(async () => {
       if (input.id === OFFICIAL_SOURCE_ID) throw new Error("内置官方源标识不可复用");
-      const trimmedToken = input.token?.trim();
+      const rawToken = input.token?.trim();
       let resolvedLocation = input.location.trim();
+      if (input.access === "git" && rawToken && !resolvedLocation.startsWith("https://")) {
+        throw new Error("HTTPS 访问令牌仅可用于 https:// 协议的 Git 仓库");
+      }
+      const trimmedToken = rawToken ? rawToken : undefined;
+      if (trimmedToken) assertValidToken(trimmedToken);
       let availableRulepacks: string[] | undefined;
       let lastSyncedAt: string | undefined;
 
@@ -175,6 +205,7 @@ export class SourceManager {
         if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("本地来源必须是普通文件夹");
         resolvedLocation = await realpath(resolvedLocation);
         const packs = await listAvailableRulePacks(resolvedLocation);
+        if (packs.length === 0) throw new Error("所选目录中未发现可用的规则包");
         availableRulepacks = packs.map((pack) => pack.id);
         lastSyncedAt = new Date().toISOString();
       }
@@ -202,6 +233,64 @@ export class SourceManager {
       if (trimmedToken) {
         const secrets = await this.loadSecrets();
         secrets[record.id] = trimmedToken;
+        await this.saveSecrets(secrets);
+      }
+      return this.list();
+    });
+  }
+
+  async update(input: UpdateSourceInput): Promise<AssetSourceRecord[]> {
+    return this.serialized(async () => {
+      if (input.id === OFFICIAL_SOURCE_ID) throw new Error("内置智枢官方源不可编辑");
+      const existing = await this.loadStoredSources();
+      const index = existing.findIndex((item) => item.id === input.id);
+      const current = existing[index];
+      if (index < 0 || !current) throw new Error(`未找到来源：${input.id}`);
+
+      const nextName = input.name !== undefined ? input.name.trim() : current.name;
+      const nextBranch =
+        current.access === "git"
+          ? input.branch !== undefined
+            ? input.branch.trim() || undefined
+            : current.branch
+          : undefined;
+      const nextRequired =
+        current.tier === "enterprise"
+          ? input.requiredRulepacks !== undefined
+            ? [...new Set(input.requiredRulepacks)]
+            : current.requiredRulepacks
+          : [];
+      const rawToken = input.token?.trim();
+      if (current.access === "git" && rawToken && !current.location.startsWith("https://")) {
+        throw new Error("HTTPS 访问令牌仅可用于 https:// 协议的 Git 仓库");
+      }
+      const newToken = rawToken ? rawToken : undefined;
+      if (newToken) assertValidToken(newToken);
+
+      const updated: AssetSourceRecord = {
+        ...current,
+        name: nextName,
+        requiredRulepacks: nextRequired,
+      };
+      if (nextBranch) updated.branch = nextBranch;
+      else delete updated.branch;
+
+      if (input.clearToken) {
+        delete updated.hasLocalToken;
+        delete updated.maskedToken;
+      } else if (newToken) {
+        updated.hasLocalToken = true;
+        updated.maskedToken = maskSecretValue(newToken);
+      }
+
+      assertAssetSourceRecord(updated);
+      existing[index] = updated;
+      await this.saveStoredSources(existing);
+
+      if (input.clearToken || newToken) {
+        const secrets = await this.loadSecrets();
+        if (input.clearToken) delete secrets[current.id];
+        else if (newToken) secrets[current.id] = newToken;
         await this.saveSecrets(secrets);
       }
       return this.list();
@@ -236,6 +325,7 @@ export class SourceManager {
       if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("本地来源必须是普通文件夹");
       const resolved = await realpath(input.location);
       const packs = await listAvailableRulePacks(resolved);
+      if (packs.length === 0) throw new Error("所选目录中未发现可用的规则包");
       return {
         ok: true,
         message: `目录有效 · 发现 ${packs.length} 个规则包`,
@@ -244,25 +334,27 @@ export class SourceManager {
       };
     }
     assertValidGitLocation(input.location);
+    const trimmedBranch = input.branch?.trim();
+    if (trimmedBranch) assertValidBranch(trimmedBranch);
     let token = input.token?.trim();
     if (!token && input.id) {
       const secrets = await this.loadSecrets();
       token = secrets[input.id];
     }
     const args = ["ls-remote", "--heads", "--", input.location];
-    if (input.branch?.trim()) args.push(input.branch.trim());
+    if (trimmedBranch) args.push(`refs/heads/${trimmedBranch}`);
     const { stdout } = await execFileAsync("git", args, {
       timeout: 15000,
       maxBuffer: 1024 * 1024,
       env: gitEnvWithOptionalToken(input.location, token),
     });
     const refCount = stdout.split("\n").filter((line) => line.trim()).length;
-    if (input.branch?.trim() && refCount === 0) {
-      throw new Error(`未找到指定分支：${input.branch.trim()}`);
+    if (trimmedBranch && refCount === 0) {
+      throw new Error(`未找到指定分支：${trimmedBranch}`);
     }
     return {
       ok: true,
-      message: input.branch?.trim() ? `Git 连接正常 · 分支 ${input.branch.trim()} 可用` : `Git 连接正常 · 发现 ${refCount} 个分支`,
+      message: trimmedBranch ? `Git 连接正常 · 分支 ${trimmedBranch} 可用` : `Git 连接正常 · 发现 ${refCount} 个分支`,
     };
   }
 
@@ -278,9 +370,14 @@ export class SourceManager {
       if (index < 0 || !target) throw new Error(`未找到来源：${id}`);
 
       if (target.access === "local") {
-        const packs = await listAvailableRulePacks(target.location);
+        if (!path.isAbsolute(target.location)) throw new Error("本地目录来源必须使用绝对路径");
+        const info = await lstat(target.location);
+        if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("本地来源必须是普通文件夹");
+        const resolved = await realpath(target.location);
+        const packs = await listAvailableRulePacks(resolved);
         existing[index] = {
           ...target,
+          location: resolved,
           lastSyncedAt: new Date().toISOString(),
           availableRulepacks: packs.map((pack) => pack.id),
         };
@@ -296,8 +393,9 @@ export class SourceManager {
       await mkdir(this.checkoutsRoot, { recursive: true });
       const checkoutDir = path.join(this.checkoutsRoot, target.id);
       const branch = target.branch?.trim();
+      if (branch) assertValidBranch(branch);
 
-      if (await exists(path.join(checkoutDir, ".git"))) {
+      if (await exists(path.join(checkoutDir, ".git", "HEAD"))) {
         const fetchArgs = branch
           ? ["-C", checkoutDir, "fetch", "--depth", "1", "origin", branch]
           : ["-C", checkoutDir, "fetch", "--depth", "1", "origin"];
@@ -308,11 +406,17 @@ export class SourceManager {
           env,
         });
       } else {
-        await rm(checkoutDir, { recursive: true, force: true });
-        const cloneArgs = ["clone", "--depth", "1"];
-        if (branch) cloneArgs.push("--branch", branch);
-        cloneArgs.push("--", target.location, checkoutDir);
-        await execFileAsync("git", cloneArgs, { timeout: 60000, maxBuffer: 4 * 1024 * 1024, env });
+        const stagingDir = path.join(this.checkoutsRoot, `.sync-${target.id}-${randomUUID()}`);
+        try {
+          const cloneArgs = ["clone", "--depth", "1"];
+          if (branch) cloneArgs.push("--branch", branch);
+          cloneArgs.push("--", target.location, stagingDir);
+          await execFileAsync("git", cloneArgs, { timeout: 60000, maxBuffer: 4 * 1024 * 1024, env });
+          await rm(checkoutDir, { recursive: true, force: true });
+          await rename(stagingDir, checkoutDir);
+        } finally {
+          await rm(stagingDir, { recursive: true, force: true });
+        }
       }
 
       const packs = await listAvailableRulePacks(checkoutDir);

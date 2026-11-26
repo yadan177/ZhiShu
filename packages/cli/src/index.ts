@@ -173,14 +173,63 @@ async function projectConfigExists(root: string): Promise<boolean> {
   }
 }
 
-function readFlagValue(args: readonly string[], flag: string): string | undefined {
+function readFlagValue(
+  args: readonly string[],
+  flag: string,
+  knownFlags?: ReadonlySet<string>,
+): string | undefined {
   const index = args.indexOf(flag);
   if (index < 0) return undefined;
   const value = args[index + 1];
-  if (value === undefined || value.startsWith("--")) {
+  if (value === undefined) {
+    throw new Error(`${flag} 缺少参数值`);
+  }
+  // 仅当下一个参数本身是已知 CLI 选项时才视为缺值，允许 --before/--after 传入以 "---" 开头的 Markdown 文本。
+  if (knownFlags ? knownFlags.has(value) : value.startsWith("--")) {
     throw new Error(`${flag} 缺少参数值`);
   }
   return value;
+}
+
+function parseCommandArgs(
+  args: readonly string[],
+  options: {
+    booleanFlags?: readonly string[];
+    valueFlags?: readonly string[];
+    maxPositionals?: number;
+    commandName: string;
+  },
+): { positionals: string[]; flags: Set<string>; values: Map<string, string> } {
+  const boolSet = new Set(options.booleanFlags ?? []);
+  const valSet = new Set(options.valueFlags ?? []);
+  const knownAll = new Set([...boolSet, ...valSet]);
+  const positionals: string[] = [];
+  const flags = new Set<string>();
+  const values = new Map<string, string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg.startsWith("--")) {
+      if (boolSet.has(arg)) {
+        flags.add(arg);
+        continue;
+      }
+      if (valSet.has(arg)) {
+        const next = args[i + 1];
+        if (next === undefined || knownAll.has(next) || (next.startsWith("--") && !["--before", "--after", "--evidence", "--summary", "--reason"].includes(arg))) {
+          throw new Error(`${arg} 缺少参数值`);
+        }
+        values.set(arg, next);
+        i++;
+        continue;
+      }
+      throw new Error(`${options.commandName} 包含不支持的参数：${arg}`);
+    }
+    positionals.push(arg);
+  }
+  if (options.maxPositionals !== undefined && positionals.length > options.maxPositionals) {
+    throw new Error(`${options.commandName} 参数过多：${positionals.join(" ")}`);
+  }
+  return { positionals, flags, values };
 }
 
 function collectPositionalArgs(args: readonly string[], valueFlags: ReadonlySet<string>): string[] {
@@ -220,33 +269,37 @@ async function runEvolve(args: readonly string[]): Promise<void> {
     "--reason",
     "--out",
   ]);
-  const inboxArg = readFlagValue(rest, "--inbox");
+  const boolFlags = new Set(["--json", "--apply", "--allow-previously-rejected"]);
+  const allEvolveFlags = new Set([...valueFlags, ...boolFlags]);
+  const readEvolveFlag = (flag: string): string | undefined => readFlagValue(rest, flag, allEvolveFlags);
+  const inboxArg = readEvolveFlag("--inbox");
   const inboxDir = inboxArg ? path.resolve(inboxArg) : resolveDefaultEvolutionDir();
   const store = new EvolutionStore(inboxDir);
 
   switch (subcommand) {
     case "capture": {
-      const sourceWorkspace = readFlagValue(rest, "--source-workspace");
-      const fromJson = readFlagValue(rest, "--from-json");
+      const sourceWorkspace = readEvolveFlag("--source-workspace");
+      const fromJson = readEvolveFlag("--from-json");
+      const allowPreviouslyRejected = rest.includes("--allow-previously-rejected");
       let result;
       if (fromJson) {
         result = await store.importProposalFile(path.resolve(fromJson), {
           targetSourceRoot: sourceWorkspace ? path.resolve(sourceWorkspace) : undefined,
         });
       } else {
-        const title = readFlagValue(rest, "--title");
-        const targetKind = (readFlagValue(rest, "--target-kind") ?? "rule") as EvolutionTargetKind;
-        const targetPath = readFlagValue(rest, "--target-path");
-        const anchorHeading = readFlagValue(rest, "--anchor");
-        const operation = (readFlagValue(rest, "--op") ?? "add-item") as EvolutionOperation;
-        const channel = (readFlagValue(rest, "--channel") ?? "session-capture") as EvolutionChannel;
-        const beforeSnippet = readFlagValue(rest, "--before");
-        const afterSnippet = readFlagValue(rest, "--after");
-        const summary = readFlagValue(rest, "--summary");
-        const targetRulepack = readFlagValue(rest, "--rulepack");
-        const evidenceSummary = readFlagValue(rest, "--evidence");
-        const sourceLabel = readFlagValue(rest, "--source-label") ?? "CLI 会话捕获";
-        const url = readFlagValue(rest, "--url");
+        const title = readEvolveFlag("--title");
+        const targetKind = (readEvolveFlag("--target-kind") ?? "rule") as EvolutionTargetKind;
+        const targetPath = readEvolveFlag("--target-path");
+        const anchorHeading = readEvolveFlag("--anchor");
+        const operation = (readEvolveFlag("--op") ?? "add-item") as EvolutionOperation;
+        const channel = (readEvolveFlag("--channel") ?? "session-capture") as EvolutionChannel;
+        const beforeSnippet = readEvolveFlag("--before");
+        const afterSnippet = readEvolveFlag("--after");
+        const summary = readEvolveFlag("--summary");
+        const targetRulepack = readEvolveFlag("--rulepack");
+        const evidenceSummary = readEvolveFlag("--evidence");
+        const sourceLabel = readEvolveFlag("--source-label") ?? "CLI 会话捕获";
+        const url = readEvolveFlag("--url");
         if (!title || !targetPath || !anchorHeading || !evidenceSummary) {
           throw new Error(
             "capture 必填参数：--title、--target-path、--anchor、--evidence（或使用 --from-json <file>）",
@@ -273,7 +326,10 @@ async function runEvolve(args: readonly string[]): Promise<void> {
               },
             ],
           },
-          { targetSourceRoot: sourceWorkspace ? path.resolve(sourceWorkspace) : undefined },
+          {
+            allowPreviouslyRejected,
+            targetSourceRoot: sourceWorkspace ? path.resolve(sourceWorkspace) : undefined,
+          },
         );
       }
       if (result.outcome === "created" && result.proposal) {
@@ -378,11 +434,41 @@ async function runEvolve(args: readonly string[]): Promise<void> {
       console.log(`已原子写入并完成自动化门禁校验：${applied.receipt.targetFilePath}`);
       return;
     }
+    case "recheck": {
+      const positionals = collectPositionalArgs(rest, valueFlags);
+      const proposalId = positionals[0];
+      const sourceWorkspace = readEvolveFlag("--source-workspace");
+      if (!proposalId || !sourceWorkspace) {
+        throw new Error("recheck 需要参数：<proposal-id> --source-workspace <dir>");
+      }
+      const resolvedSource = path.resolve(sourceWorkspace);
+      const res = await store.recheck(proposalId, {
+        id: "cli-workspace",
+        name: path.basename(resolvedSource) || resolvedSource,
+        root: resolvedSource,
+        readonly: false,
+      });
+      if (res.conflicts.length) {
+        for (const conflict of res.conflicts) console.error(conflict);
+        process.exitCode = 2;
+        return;
+      }
+      console.log(`重新检测通过，提案 ${res.proposal.id} 已就绪（status: ${res.proposal.status}）。`);
+      return;
+    }
+    case "reopen": {
+      const positionals = collectPositionalArgs(rest, valueFlags);
+      const proposalId = positionals[0];
+      if (!proposalId) throw new Error("reopen 需要指定 <proposal-id>");
+      const updated = await store.reopen(proposalId);
+      console.log(`已重新打开提案并清除驳回指纹：${updated.id}`);
+      return;
+    }
     case "reject": {
       const positionals = collectPositionalArgs(rest, valueFlags);
       const proposalId = positionals[0];
       if (!proposalId) throw new Error("reject 需要指定 <proposal-id>");
-      const reason = readFlagValue(rest, "--reason");
+      const reason = readEvolveFlag("--reason");
       const updated = await store.reject(proposalId, reason);
       console.log(`已驳回提案并记录去重指纹：${updated.id}`);
       return;
@@ -390,9 +476,9 @@ async function runEvolve(args: readonly string[]): Promise<void> {
     case "export": {
       const positionals = collectPositionalArgs(rest, valueFlags);
       const proposalId = positionals[0];
-      const outPath = readFlagValue(rest, "--out");
+      const outPath = readEvolveFlag("--out");
       if (!proposalId || !outPath) throw new Error("export 需要参数：<proposal-id> --out <file.patch>");
-      const sourceWorkspace = readFlagValue(rest, "--source-workspace");
+      const sourceWorkspace = readEvolveFlag("--source-workspace");
       const exported = await store.exportPatch(
         proposalId,
         path.resolve(outPath),
@@ -403,39 +489,47 @@ async function runEvolve(args: readonly string[]): Promise<void> {
     }
     default:
       console.log(`用法：
-  zhishu evolve capture --title <标题> --target-kind rule|skill --target-path <相对路径> --anchor <章节标题> --op add-item|update-item|deprecate-item --after <内容> --evidence <依据>
+  zhishu evolve capture --title <标题> --target-kind rule|skill --target-path <相对路径> --anchor <章节标题> --op add-item|update-item|deprecate-item --after <内容> --evidence <依据> [--allow-previously-rejected]
   zhishu evolve capture --from-json <提案文件.json>
   zhishu evolve list [--status pending|conflict|stale|processed|all] [--json]
   zhishu evolve scan-overrides <project1> <project2> [...] [--source-workspace <规则源目录>]
+  zhishu evolve recheck <proposal-id> --source-workspace <规则源目录>
   zhishu evolve preview <proposal-id> --source-workspace <规则源目录>
   zhishu evolve apply <proposal-id> --source-workspace <规则源目录> --apply
   zhishu evolve reject <proposal-id> [--reason <原因>]
+  zhishu evolve reopen <proposal-id>
   zhishu evolve export <proposal-id> --out <补丁文件.patch>`);
   }
 }
 
 async function run(): Promise<void> {
   const command = process.argv[2] ?? "help";
-  const root = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : process.cwd();
+  const rawArgs = process.argv.slice(3);
 
   switch (command) {
     case "detect": {
+      const parsed = parseCommandArgs(rawArgs, { maxPositionals: 1, commandName: "detect" });
+      const root = parsed.positionals[0] ?? process.cwd();
       const result = await detectProject(root);
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case "init": {
+      const parsed = parseCommandArgs(rawArgs, {
+        valueFlags: ["--source-workspace", "--targets", "--rulepacks"],
+        maxPositionals: 1,
+        commandName: "init",
+      });
+      const root = parsed.positionals[0] ?? process.cwd();
       if (await projectConfigExists(root)) throw new Error("agent-rules.yaml 已存在；请使用 diff/update，不要再次运行 init");
-      const sourceArg = process.argv.indexOf("--source-workspace");
-      const sourceRoot = sourceArg >= 0 ? process.argv[sourceArg + 1] : undefined;
-      if (sourceArg >= 0 && !sourceRoot) throw new Error("--source-workspace 需要规则源目录");
+      const sourceRoot = parsed.values.get("--source-workspace");
       const targets = requestedTargets();
       const selectedRulepacks = requestedRulepacks();
       const detection = await detectProject(root);
       const recommendation = await createDefaultConfig(root, codexAdapter);
       printInitRecommendation(detection, recommendation.rulepacks);
       let config;
-      if (sourceArg >= 0 && sourceRoot !== undefined) {
+      if (sourceRoot !== undefined) {
         config = await initializeProject(root, codexAdapter, sourceRoot, targets, selectedRulepacks);
       } else {
         const release = await findLatestRelease(DEFAULT_REPOSITORY);
@@ -459,6 +553,12 @@ async function run(): Promise<void> {
     case "generate":
     case "diff":
     case "update": {
+      const parsed = parseCommandArgs(rawArgs, {
+        booleanFlags: command === "diff" ? [] : ["--apply"],
+        maxPositionals: 1,
+        commandName: command,
+      });
+      const root = parsed.positionals[0] ?? process.cwd();
       const config = await loadProjectConfig(root);
       const repository = config.source.type === "github" ? config.source.repository : undefined;
       if (config.source.type === "github" && !repository) throw new Error("GitHub 规则源缺少 repository");
@@ -482,7 +582,7 @@ async function run(): Promise<void> {
         process.exitCode = 2;
         return;
       }
-      if (command === "diff" || !process.argv.includes("--apply")) {
+      if (command === "diff" || !parsed.flags.has("--apply")) {
         if (command !== "diff" && plan.changes.length) console.log("如已审查差异，运行 update <project-directory> --apply 应用。");
         return;
       }
@@ -496,13 +596,19 @@ async function run(): Promise<void> {
       }
     }
     case "recover": {
+      const parsed = parseCommandArgs(rawArgs, {
+        booleanFlags: ["--apply"],
+        maxPositionals: 1,
+        commandName: "recover",
+      });
+      const root = parsed.positionals[0] ?? process.cwd();
       const pending = await listInterruptedTransactions(root);
       if (!pending.length) {
         console.log("没有未完成的规则更新事务。");
         return;
       }
       console.log(`发现 ${pending.length} 个未完成事务：${pending.join(", ")}`);
-      if (!process.argv.includes("--apply")) {
+      if (!parsed.flags.has("--apply")) {
         console.log("审查事务目录后，运行 recover <project-directory> --apply 恢复更新前的文件；未完成的新文件会保留在恢复副本中。");
         return;
       }
@@ -511,23 +617,24 @@ async function run(): Promise<void> {
       return;
     }
     case "uninstall": {
-      const args = process.argv.slice(3);
-      const unknownFlags = args.filter((arg) => arg.startsWith("--") && arg !== "--apply" && arg !== "--details");
-      const directories = args.filter((arg) => !arg.startsWith("--"));
-      if (unknownFlags.length || directories.length > 1) throw new Error(`uninstall 参数不合法：${args.join(" ")}`);
-      const target = directories[0] ?? process.cwd();
+      const parsed = parseCommandArgs(rawArgs, {
+        booleanFlags: ["--apply", "--details"],
+        maxPositionals: 1,
+        commandName: "uninstall",
+      });
+      const target = parsed.positionals[0] ?? process.cwd();
       const plan = await planUninstall(target, codexAdapter);
       if (plan.conflicts.length) {
         for (const conflict of plan.conflicts) console.error(`[${conflict.code}] ${conflict.message}`);
         process.exitCode = 2;
         return;
       }
-      if (args.includes("--details")) {
+      if (parsed.flags.has("--details")) {
         for (const change of plan.changes) console.log(renderChange(change));
       }
-      if (!args.includes("--apply")) {
+      if (!parsed.flags.has("--apply")) {
         printUninstallSummary(plan, false);
-        if (!args.includes("--details")) console.log("如需查看逐行差异，运行 zhishu uninstall <project-directory> --details。");
+        if (!parsed.flags.has("--details")) console.log("如需查看逐行差异，运行 zhishu uninstall <project-directory> --details。");
         console.log("确认后运行 zhishu uninstall <project-directory> --apply 卸载项目规则。");
         return;
       }
@@ -537,6 +644,8 @@ async function run(): Promise<void> {
       return;
     }
     case "validate": {
+      const parsed = parseCommandArgs(rawArgs, { maxPositionals: 1, commandName: "validate" });
+      const root = parsed.positionals[0] ?? process.cwd();
       const result = await validateProject(root, codexAdapter);
       if (!result.valid) {
         for (const issue of result.issues) {
@@ -549,10 +658,12 @@ async function run(): Promise<void> {
       return;
     }
     case "evolve": {
-      await runEvolve(process.argv.slice(3));
+      await runEvolve(rawArgs);
       return;
     }
     case "check": {
+      const parsed = parseCommandArgs(rawArgs, { maxPositionals: 1, commandName: "check" });
+      const root = parsed.positionals[0] ?? process.cwd();
       const validation = await validateProject(root, codexAdapter);
       if (!validation.valid) {
         for (const issue of validation.issues) console.error(`[${issue.code}] ${issue.message}`);

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import path from "node:path";
-import { lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, watch, type FSWatcher } from "node:fs";
 import { DesktopOperations, STACK_PACKS, inspectProjectRoot, inspectWorkspaceSource, loadLatestSource } from "./operations.ts";
 import type { InstallRequest, PlatformChoice, RuleSourceChoice, StackChoice } from "./operations.ts";
 import { ProjectRegistry } from "./project-registry.ts";
@@ -8,11 +8,11 @@ import { PluginLibrary } from "./plugin-library.ts";
 import type { PluginInspection } from "./plugin-library.ts";
 import { AssetOperations, type UserAssetIde } from "./asset-operations.ts";
 import { McpOperations } from "./mcp-operations.ts";
-import { SourceManager, type AddSourceInput, type TestSourceInput } from "./source-manager.ts";
+import { SourceManager, type AddSourceInput, type TestSourceInput, type UpdateSourceInput } from "./source-manager.ts";
 import { EvolutionOperations } from "./evolution-operations.ts";
 import { ToolInspector } from "./tool-inspector.ts";
 import { SoftwareUpdateService } from "./software-update.ts";
-import { electronFetch } from "./electron-fetch.ts";
+import { electronFetch, electronGenericFetch } from "./electron-fetch.ts";
 import {
   findLatestRelease,
   type EvolutionPatchEdit,
@@ -30,6 +30,10 @@ app.setName("智枢");
 let window: BrowserWindow | undefined;
 let selectedProject: string | undefined;
 let activeFileTasks = 0;
+let didInitialUpdateCheck = false;
+let installingUpdate = false;
+let evolutionWatchers: FSWatcher[] = [];
+let evolutionNotifyTimer: ReturnType<typeof setTimeout> | undefined;
 let registry: ProjectRegistry;
 let pluginLibrary: PluginLibrary;
 let pluginInspection: PluginInspection | undefined;
@@ -51,6 +55,92 @@ if (rawDevProfile) {
 const softwareUpdate = new SoftwareUpdateService((state) => {
   if (window && !window.isDestroyed()) window.webContents.send("software-update:state", state);
 }, electronFetch);
+
+const VALID_USER_ASSET_ACTIONS = new Set(["install", "update", "uninstall"]);
+const VALID_USER_ASSET_IDES = new Set<UserAssetIde>(["codex", "antigravity", "traework", "generic"]);
+const MUTATING_CHANNELS = new Set([
+  "project:choose",
+  "project:forget",
+  "project:recover",
+  "plugins:import",
+  "plugins:export-traework",
+  "assets:adopt-legacy",
+  "assets:preview",
+  "assets:apply",
+  "assets:forget",
+  "mcp:save-custom",
+  "mcp:remove-custom",
+  "mcp:adopt-legacy",
+  "mcp:preview",
+  "mcp:apply",
+  "mcp:forget",
+  "sources:add",
+  "sources:update",
+  "sources:remove",
+  "sources:sync",
+  "evolution:save-watch-sources",
+  "evolution:reset-watch-sources",
+  "evolution:scan-overrides",
+  "evolution:watch-docs",
+  "evolution:import-proposal",
+  "evolution:recheck",
+  "evolution:preview",
+  "evolution:apply",
+  "evolution:reject",
+  "evolution:reopen",
+  "evolution:archive",
+  "evolution:export-patch",
+  "rules:preview-install",
+  "rules:apply-install",
+  "rules:preview-update",
+  "rules:apply-update",
+  "rules:preview-uninstall",
+  "rules:apply-uninstall",
+  "rules:preview-repair",
+  "rules:apply-repair",
+  "rules:preview-force-uninstall",
+  "rules:apply-force-uninstall",
+]);
+
+function emitEvolutionUpdated(): void {
+  if (evolutionNotifyTimer) clearTimeout(evolutionNotifyTimer);
+  evolutionNotifyTimer = setTimeout(() => {
+    evolutionNotifyTimer = undefined;
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("evolution:updated");
+    }
+  }, 250);
+}
+
+function stopEvolutionWatchers(): void {
+  if (evolutionNotifyTimer) {
+    clearTimeout(evolutionNotifyTimer);
+    evolutionNotifyTimer = undefined;
+  }
+  for (const watcher of evolutionWatchers) {
+    try {
+      watcher.close();
+    } catch {
+      // 忽略关闭 watcher 时的平台差异异常
+    }
+  }
+  evolutionWatchers = [];
+}
+
+function startEvolutionWatchers(stateDir: string): void {
+  stopEvolutionWatchers();
+  const dirs = [stateDir, path.join(stateDir, "proposals")];
+  for (const dir of dirs) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      const watcher = watch(dir, () => emitEvolutionUpdated());
+      watcher.on("error", () => {});
+      evolutionWatchers.push(watcher);
+    } catch {
+      // 文件监听不可用时仍保留窗口聚焦同步与手动刷新兜底
+    }
+  }
+}
 
 function requireProject(): string {
   if (!selectedProject) throw new Error("请先选择项目文件夹");
@@ -87,23 +177,68 @@ function parseRuleSource(value: unknown): RuleSourceChoice | undefined {
   throw new Error("不支持的规则源类型");
 }
 
+function parseEditedPatch(rawPatch: unknown): EvolutionPatchEdit | undefined {
+  if (rawPatch === undefined) return undefined;
+  if (typeof rawPatch !== "object" || rawPatch === null || Array.isArray(rawPatch)) {
+    throw new Error("补丁编辑参数无效");
+  }
+  const p = rawPatch as Record<string, unknown>;
+  if (
+    (p.anchorHeading !== undefined && typeof p.anchorHeading !== "string") ||
+    (p.beforeSnippet !== undefined && typeof p.beforeSnippet !== "string") ||
+    (p.afterSnippet !== undefined && typeof p.afterSnippet !== "string")
+  ) {
+    throw new Error("补丁字段必须是字符串");
+  }
+  return {
+    anchorHeading: p.anchorHeading,
+    beforeSnippet: p.beforeSnippet,
+    afterSnippet: p.afterSnippet,
+  };
+}
+
+function parseSourceInput(rawInput: unknown): AddSourceInput {
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) {
+    throw new Error("来源配置参数无效");
+  }
+  const raw = rawInput as Record<string, unknown>;
+  if (
+    typeof raw.id !== "string" ||
+    typeof raw.name !== "string" ||
+    (raw.tier !== "enterprise" && raw.tier !== "personal") ||
+    (raw.access !== "local" && raw.access !== "git") ||
+    typeof raw.location !== "string" ||
+    (raw.branch !== undefined && typeof raw.branch !== "string") ||
+    (raw.token !== undefined && typeof raw.token !== "string") ||
+    (raw.requiredRulepacks !== undefined && !isStringArray(raw.requiredRulepacks))
+  ) {
+    throw new Error("来源表单字段无效");
+  }
+  return {
+    id: raw.id,
+    name: raw.name,
+    tier: raw.tier,
+    access: raw.access,
+    location: raw.location,
+    branch: raw.branch,
+    token: raw.token,
+    requiredRulepacks: raw.requiredRulepacks,
+  };
+}
+
 function registerHandlers(): void {
   const guarded = <T extends unknown[]>(channel: string, action: (...args: T) => Promise<unknown>): void => {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
         throw new Error("请求来源不正确");
       }
-      const fileTask =
-        channel.startsWith("rules:") ||
-        channel.startsWith("plugins:") ||
-        channel.startsWith("assets:") ||
-        channel.startsWith("mcp:") ||
-        channel.startsWith("sources:") ||
-        channel.startsWith("evolution:") ||
-        channel === "project:recover";
-      if (fileTask) activeFileTasks++;
+      const isMutating = MUTATING_CHANNELS.has(channel);
+      if (isMutating && installingUpdate) {
+        throw new Error("正在安装软件更新，请等待更新完成后再操作");
+      }
+      if (isMutating) activeFileTasks++;
       try { return await action(...args as T); }
-      finally { if (fileTask) activeFileTasks--; }
+      finally { if (isMutating) activeFileTasks--; }
     });
   };
 
@@ -184,36 +319,78 @@ function registerHandlers(): void {
     }
     return assetOperations.adoptLegacy(keys);
   });
-  guarded("assets:preview", (action: unknown, key: unknown, ide: unknown, id?: unknown) => {
-    if (typeof action !== "string" || typeof key !== "string" || typeof ide !== "string" || (id !== undefined && typeof id !== "string")) {
+  guarded("assets:preview", (action: unknown, key: unknown, ide: unknown, id?: unknown, force?: unknown) => {
+    if (
+      typeof action !== "string" ||
+      !VALID_USER_ASSET_ACTIONS.has(action) ||
+      typeof key !== "string" ||
+      typeof ide !== "string" ||
+      !VALID_USER_ASSET_IDES.has(ide as UserAssetIde) ||
+      (id !== undefined && typeof id !== "string") ||
+      (force !== undefined && typeof force !== "boolean")
+    ) {
       throw new Error("资产预览参数无效");
     }
-    return assetOperations.preview(action as "install" | "update" | "uninstall", key, ide as UserAssetIde, id);
+    return assetOperations.preview(
+      action as "install" | "update" | "uninstall",
+      key,
+      ide as UserAssetIde,
+      id,
+      { force: force === true },
+    );
   });
   guarded("assets:apply", (token: unknown) => {
     if (typeof token !== "string" || !token) throw new Error("资产应用令牌无效");
     return assetOperations.apply(token);
   });
+  guarded("assets:forget", (ide: unknown, id: unknown) => {
+    if (typeof ide !== "string" || !VALID_USER_ASSET_IDES.has(ide as UserAssetIde) || typeof id !== "string" || !id) {
+      throw new Error("清除资产记录参数无效");
+    }
+    return assetOperations.forgetReceipt(ide as UserAssetIde, id);
+  });
+  guarded("assets:clear-preview", () => assetOperations.clearPreview());
   guarded("tools:inspect", async () => {
     const [assets, mcps] = await Promise.all([assetOperations.list(), mcpOperations.listInstalled()]);
     return toolInspector.inspect(assets, mcps);
   });
+  guarded("tools:snapshot", async () => {
+    const [assets, mcps, legacyAssets, legacyMcps] = await Promise.all([
+      assetOperations.list(),
+      mcpOperations.listInstalled(),
+      assetOperations.inspectLegacy(),
+      mcpOperations.inspectLegacy(),
+    ]);
+    const tools = await toolInspector.inspect(assets, mcps);
+    return { tools, assets, mcps, legacyAssets, legacyMcps };
+  });
   guarded("mcp:catalog", () => mcpOperations.listCatalog());
-  guarded("mcp:save-custom", (definition: unknown) => {
+  guarded("mcp:save-custom", (definition: unknown, updateExisting?: unknown) => {
     if (typeof definition !== "object" || definition === null || Array.isArray(definition)) {
       throw new Error("自定义 MCP 定义无效");
     }
-    return mcpOperations.saveCustomServer(definition as McpServerDefinition);
+    if (updateExisting !== undefined && typeof updateExisting !== "boolean") {
+      throw new Error("自定义 MCP 保存选项无效");
+    }
+    return mcpOperations.saveCustomServer(definition as McpServerDefinition, { updateExisting: updateExisting === true });
   });
   guarded("mcp:remove-custom", (id: unknown) => {
     if (typeof id !== "string" || !id) throw new Error("MCP 标识无效");
     return mcpOperations.removeCustomServer(id);
   });
   guarded("mcp:list", () => mcpOperations.listInstalled());
-  guarded("mcp:preview", (action: unknown, serverId: unknown, toolId: unknown, envValues?: unknown) => {
+  guarded("mcp:inspect-legacy", () => mcpOperations.inspectLegacy());
+  guarded("mcp:adopt-legacy", (keys?: unknown) => {
+    if (keys !== undefined && !isStringArray(keys)) {
+      throw new Error("旧版 MCP 接管参数无效");
+    }
+    return mcpOperations.adoptLegacy(keys);
+  });
+  guarded("mcp:preview", (action: unknown, serverId: unknown, toolId: unknown, envValues?: unknown, force?: unknown) => {
     if (typeof action !== "string" || !["install", "update", "uninstall"].includes(action) ||
       typeof serverId !== "string" || !serverId ||
-      (toolId !== "antigravity" && toolId !== "codex")) {
+      (toolId !== "antigravity" && toolId !== "codex") ||
+      (force !== undefined && typeof force !== "boolean")) {
       throw new Error("MCP 预览参数无效");
     }
     const parsedEnv: Record<string, string> = {};
@@ -226,12 +403,25 @@ function registerHandlers(): void {
         parsedEnv[k] = v;
       }
     }
-    return mcpOperations.preview(action as "install" | "update" | "uninstall", serverId, toolId as McpToolId, parsedEnv);
+    return mcpOperations.preview(
+      action as "install" | "update" | "uninstall",
+      serverId,
+      toolId as McpToolId,
+      parsedEnv,
+      { force: force === true },
+    );
   });
   guarded("mcp:apply", (token: unknown) => {
     if (typeof token !== "string" || !token) throw new Error("MCP 应用令牌无效");
     return mcpOperations.apply(token);
   });
+  guarded("mcp:forget", (toolId: unknown, id: unknown) => {
+    if ((toolId !== "antigravity" && toolId !== "codex") || typeof id !== "string" || !id) {
+      throw new Error("清除 MCP 记录参数无效");
+    }
+    return mcpOperations.forgetReceipt(toolId, id);
+  });
+  guarded("mcp:clear-preview", () => mcpOperations.clearPreview());
   guarded("sources:list", () => sourceManager.list());
   guarded("sources:choose-dir", async () => {
     const result = await dialog.showOpenDialog(requireWindow(), {
@@ -242,31 +432,32 @@ function registerHandlers(): void {
     if (result.canceled || !result.filePaths[0]) return undefined;
     return result.filePaths[0];
   });
-  guarded("sources:add", (rawInput: unknown) => {
+  guarded("sources:add", (rawInput: unknown) => sourceManager.add(parseSourceInput(rawInput)));
+  guarded("sources:update", (rawInput: unknown) => {
     if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) {
-      throw new Error("来源配置参数无效");
+      throw new Error("来源编辑参数无效");
     }
     const raw = rawInput as Record<string, unknown>;
-    if (typeof raw.id !== "string" || typeof raw.name !== "string" ||
-      (raw.tier !== "enterprise" && raw.tier !== "personal") ||
-      (raw.access !== "local" && raw.access !== "git") ||
-      typeof raw.location !== "string" ||
+    if (
+      typeof raw.id !== "string" ||
+      !raw.id ||
+      (raw.name !== undefined && typeof raw.name !== "string") ||
       (raw.branch !== undefined && typeof raw.branch !== "string") ||
       (raw.token !== undefined && typeof raw.token !== "string") ||
-      (raw.requiredRulepacks !== undefined && !isStringArray(raw.requiredRulepacks))) {
-      throw new Error("来源表单字段无效");
+      (raw.clearToken !== undefined && typeof raw.clearToken !== "boolean") ||
+      (raw.requiredRulepacks !== undefined && !isStringArray(raw.requiredRulepacks))
+    ) {
+      throw new Error("来源编辑字段无效");
     }
-    const input: AddSourceInput = {
+    const input: UpdateSourceInput = {
       id: raw.id,
       name: raw.name,
-      tier: raw.tier,
-      access: raw.access,
-      location: raw.location,
       branch: raw.branch,
       token: raw.token,
+      clearToken: raw.clearToken,
       requiredRulepacks: raw.requiredRulepacks,
     };
-    return sourceManager.add(input);
+    return sourceManager.update(input);
   });
   guarded("sources:remove", (id: unknown) => {
     if (typeof id !== "string" || !id) throw new Error("来源标识无效");
@@ -318,33 +509,42 @@ function registerHandlers(): void {
   };
 
   guarded("evolution:list", () => evolutionOperations.list());
+  guarded("evolution:watch-status", async () => evolutionOperations.getWatchStatus());
   guarded("evolution:watch-sources", () => evolutionOperations.getWatchSources());
   guarded("evolution:save-watch-sources", (rawSources: unknown) => {
     if (!Array.isArray(rawSources)) throw new Error("巡检源配置必须是数组");
     return evolutionOperations.saveWatchSources(rawSources as WatchSourceConfig[]);
   });
-  guarded("evolution:scan-overrides", (workspaceRoot?: unknown) => {
+  guarded("evolution:reset-watch-sources", () => evolutionOperations.resetWatchSources());
+  guarded("evolution:scan-overrides", async (workspaceRoot?: unknown) => {
     if (workspaceRoot !== undefined && (typeof workspaceRoot !== "string" || !path.isAbsolute(workspaceRoot))) {
       throw new Error("本地规则源路径无效");
     }
-    return evolutionOperations.scanOverrides(workspaceRoot);
+    const res = await evolutionOperations.scanOverrides(workspaceRoot);
+    emitEvolutionUpdated();
+    return res;
   });
-  guarded("evolution:watch-docs", (rawOptions?: unknown) => {
-    if (rawOptions === undefined) return evolutionOperations.watchDocs();
-    if (typeof rawOptions !== "object" || rawOptions === null || Array.isArray(rawOptions)) {
-      throw new Error("巡检参数无效");
+  guarded("evolution:watch-docs", async (rawOptions?: unknown) => {
+    let options: { sourceIds?: string[]; workspaceRoot?: string } | undefined;
+    if (rawOptions !== undefined) {
+      if (typeof rawOptions !== "object" || rawOptions === null || Array.isArray(rawOptions)) {
+        throw new Error("巡检参数无效");
+      }
+      const opts = rawOptions as Record<string, unknown>;
+      if (opts.sourceIds !== undefined && !isStringArray(opts.sourceIds)) {
+        throw new Error("巡检源标识列表无效");
+      }
+      if (opts.workspaceRoot !== undefined && (typeof opts.workspaceRoot !== "string" || !path.isAbsolute(opts.workspaceRoot))) {
+        throw new Error("本地规则源路径无效");
+      }
+      options = {
+        sourceIds: opts.sourceIds,
+        workspaceRoot: opts.workspaceRoot,
+      };
     }
-    const opts = rawOptions as Record<string, unknown>;
-    if (opts.sourceIds !== undefined && !isStringArray(opts.sourceIds)) {
-      throw new Error("巡检源标识列表无效");
-    }
-    if (opts.workspaceRoot !== undefined && (typeof opts.workspaceRoot !== "string" || !path.isAbsolute(opts.workspaceRoot))) {
-      throw new Error("本地规则源路径无效");
-    }
-    return evolutionOperations.watchDocs({
-      sourceIds: opts.sourceIds,
-      workspaceRoot: opts.workspaceRoot,
-    });
+    const res = await evolutionOperations.watchDocs(options);
+    emitEvolutionUpdated();
+    return res;
   });
   guarded("evolution:cancel-watch", async () => evolutionOperations.cancelWatch());
   guarded("evolution:import-proposal", async (workspaceRoot?: unknown) => {
@@ -358,59 +558,61 @@ function registerHandlers(): void {
       properties: ["openFile", "noResolveAliases"],
     });
     if (result.canceled || !result.filePaths[0]) return undefined;
-    return evolutionOperations.importProposalFile(result.filePaths[0], workspaceRoot);
+    const imported = await evolutionOperations.importProposalFile(result.filePaths[0], workspaceRoot);
+    emitEvolutionUpdated();
+    return imported;
   });
-  guarded("evolution:recheck", (proposalId: unknown, rawSource: unknown) => {
+  guarded("evolution:recheck", async (proposalId: unknown, rawSource: unknown, rawPatch?: unknown) => {
     if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
-    return evolutionOperations.recheck(proposalId, parseEvolutionTargetSource(rawSource));
+    const res = await evolutionOperations.recheck(proposalId, parseEvolutionTargetSource(rawSource), parseEditedPatch(rawPatch));
+    emitEvolutionUpdated();
+    return res;
   });
   guarded("evolution:preview", (proposalId: unknown, rawSource: unknown, rawPatch?: unknown) => {
     if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
-    let editedPatch: EvolutionPatchEdit | undefined;
-    if (rawPatch !== undefined) {
-      if (typeof rawPatch !== "object" || rawPatch === null || Array.isArray(rawPatch)) {
-        throw new Error("补丁编辑参数无效");
-      }
-      const p = rawPatch as Record<string, unknown>;
-      if (
-        (p.anchorHeading !== undefined && typeof p.anchorHeading !== "string") ||
-        (p.beforeSnippet !== undefined && typeof p.beforeSnippet !== "string") ||
-        (p.afterSnippet !== undefined && typeof p.afterSnippet !== "string")
-      ) {
-        throw new Error("补丁字段必须是字符串");
-      }
-      editedPatch = {
-        anchorHeading: p.anchorHeading,
-        beforeSnippet: p.beforeSnippet,
-        afterSnippet: p.afterSnippet,
-      };
-    }
-    return evolutionOperations.preview(proposalId, parseEvolutionTargetSource(rawSource), editedPatch);
+    return evolutionOperations.preview(proposalId, parseEvolutionTargetSource(rawSource), parseEditedPatch(rawPatch));
   });
-  guarded("evolution:apply", (token: unknown) => {
+  guarded("evolution:apply", async (token: unknown) => {
     if (typeof token !== "string" || !token) throw new Error("进化写入令牌无效");
-    return evolutionOperations.apply(token);
+    const res = await evolutionOperations.apply(token);
+    emitEvolutionUpdated();
+    return res;
   });
-  guarded("evolution:reject", (proposalId: unknown, reason?: unknown) => {
+  guarded("evolution:reject", async (proposalId: unknown, reason?: unknown) => {
     if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
     if (reason !== undefined && typeof reason !== "string") throw new Error("驳回原因无效");
-    return evolutionOperations.reject(proposalId, reason);
+    const res = await evolutionOperations.reject(proposalId, reason);
+    emitEvolutionUpdated();
+    return res;
   });
-  guarded("evolution:export-patch", async (proposalId: unknown, targetSourceRoot?: unknown) => {
+  guarded("evolution:reopen", async (proposalId: unknown) => {
+    if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
+    const res = await evolutionOperations.reopen(proposalId);
+    emitEvolutionUpdated();
+    return res;
+  });
+  guarded("evolution:archive", async (proposalId: unknown) => {
+    if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
+    const res = await evolutionOperations.archive(proposalId);
+    emitEvolutionUpdated();
+    return res;
+  });
+  guarded("evolution:export-patch", async (proposalId: unknown, targetSourceRoot?: unknown, rawPatch?: unknown) => {
     if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
     if (targetSourceRoot !== undefined && (typeof targetSourceRoot !== "string" || !path.isAbsolute(targetSourceRoot))) {
       throw new Error("规则源路径无效");
     }
+    const safeFilename = proposalId.replace(/[^a-zA-Z0-9._-]/g, "_") || "proposal";
     const result = await dialog.showSaveDialog(requireWindow(), {
       title: "导出规则进化增量补丁",
-      defaultPath: path.join(app.getPath("downloads"), `${proposalId}.patch`),
+      defaultPath: path.join(app.getPath("downloads"), `${safeFilename}.patch`),
       filters: [
         { name: "补丁文件", extensions: ["patch"] },
         { name: "Markdown", extensions: ["md"] },
       ],
     });
     if (result.canceled || !result.filePath) return undefined;
-    return evolutionOperations.exportPatch(proposalId, result.filePath, targetSourceRoot);
+    return evolutionOperations.exportPatch(proposalId, result.filePath, targetSourceRoot, parseEditedPatch(rawPatch));
   });
   guarded("rules:default-workspace-source", async () => {
     if (app.isPackaged) return undefined;
@@ -471,6 +673,24 @@ function registerHandlers(): void {
   guarded("rules:apply-update", () => operations.applyUpdate(requireProject()));
   guarded("rules:preview-uninstall", () => operations.previewUninstall(requireProject()));
   guarded("rules:apply-uninstall", () => operations.applyUninstall(requireProject()));
+  guarded("rules:preview-repair", async (rawRequest?: unknown) => {
+    if (rawRequest === undefined) return operations.previewRepair(requireProject());
+    if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) {
+      throw new Error("修复配置参数无效");
+    }
+    const raw = rawRequest as Record<string, unknown>;
+    if (!isStringArray(raw.rulepacks) || raw.rulepacks.length === 0) throw new Error("请选择至少一个规则包");
+    if (!isStringArray(raw.targets) || raw.targets.length === 0) throw new Error("请选择至少一个受支持的平台");
+    const request: InstallRequest = {
+      rulepacks: raw.rulepacks,
+      targets: raw.targets as PlatformChoice[],
+      source: parseRuleSource(raw.source),
+    };
+    return operations.previewRepair(requireProject(), request);
+  });
+  guarded("rules:apply-repair", () => operations.applyRepair(requireProject()));
+  guarded("rules:preview-force-uninstall", () => operations.previewForceUninstall(requireProject()));
+  guarded("rules:apply-force-uninstall", () => operations.applyForceUninstall(requireProject()));
   guarded("rules:clear-preview", () => operations.clearPreview());
   guarded("software-update:state", async () => softwareUpdate.getState());
   guarded("software-update:check", () => softwareUpdate.check());
@@ -478,7 +698,17 @@ function registerHandlers(): void {
   guarded("software-update:cancel", async () => softwareUpdate.cancelDownload());
   guarded("software-update:install", async () => {
     if (activeFileTasks > 0) throw new Error("文件操作仍在进行，请完成后再安装软件更新");
-    return softwareUpdate.install();
+    installingUpdate = true;
+    try {
+      const outcome = await softwareUpdate.install();
+      if (outcome.phase !== "installing") {
+        installingUpdate = false;
+      }
+      return outcome;
+    } catch (error) {
+      installingUpdate = false;
+      throw error;
+    }
   });
   guarded("software-update:open-download", () => softwareUpdate.openDownloadPage());
 }
@@ -511,20 +741,45 @@ function createWindow(): void {
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.once("ready-to-show", () => {
     window?.show();
-    void softwareUpdate.check();
+    if (!didInitialUpdateCheck) {
+      didInitialUpdateCheck = true;
+      void softwareUpdate.check();
+    }
+  });
+  window.on("focus", () => {
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("evolution:updated");
+    }
   });
   void window.loadFile(path.join(__dirname, "../dist/index.html"));
-  window.on("closed", () => { window = undefined; });
+  window.on("closed", () => {
+    window = undefined;
+    selectedProject = undefined;
+    pluginInspection = undefined;
+    void operations.clearPreview().catch(() => {});
+    void assetOperations?.clearPreview().catch(() => {});
+    void mcpOperations?.clearPreview().catch(() => {});
+  });
 }
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (!window || window.isDestroyed()) return;
+    if (!window || window.isDestroyed()) {
+      if (app.isReady()) createWindow();
+      return;
+    }
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
+  });
+
+  app.on("before-quit", () => {
+    stopEvolutionWatchers();
+    softwareUpdate.cancelDownload();
+    evolutionOperations?.cancelWatch();
+    void operations.clearPreview().catch(() => {});
   });
 
   app.whenReady().then(() => {
@@ -589,12 +844,22 @@ if (!app.requestSingleInstanceLock()) {
         ? { ...profilePaths, legacyReceiptDirs: [path.join(developmentProfile, "legacy-receipts")] }
         : profilePaths,
     );
-    mcpOperations = new McpOperations(path.join(app.getPath("userData"), "mcp-assets"), profilePaths);
+    mcpOperations = new McpOperations(
+      path.join(app.getPath("userData"), "mcp-assets"),
+      developmentProfile
+        ? { ...profilePaths, legacyReceiptDirs: [path.join(developmentProfile, "legacy-mcp-receipts")] }
+        : profilePaths,
+    );
     toolInspector = new ToolInspector(profilePaths);
     sourceManager = new SourceManager(path.join(app.getPath("userData"), "sources"), electronFetch);
-    evolutionOperations = new EvolutionOperations(path.join(app.getPath("userData"), "evolution"), {
+    const evolutionStateDir =
+      !developmentProfile && process.env.ZHISHU_EVOLUTION_DIR && path.isAbsolute(process.env.ZHISHU_EVOLUTION_DIR)
+        ? process.env.ZHISHU_EVOLUTION_DIR
+        : path.join(app.getPath("userData"), "evolution");
+    evolutionOperations = new EvolutionOperations(evolutionStateDir, {
       registry,
       sourceManager,
+      fetcher: electronGenericFetch,
       defaultWorkspaceRoot: async () => {
         if (app.isPackaged) return undefined;
         const repoCandidate = path.resolve(__dirname, "../../..");
@@ -610,7 +875,13 @@ if (!app.requestSingleInstanceLock()) {
           window.webContents.send("evolution:watch-progress", progress);
         }
       },
+      onWatchStateChange: (status) => {
+        if (window && !window.isDestroyed()) {
+          window.webContents.send("evolution:watch-state", status);
+        }
+      },
     });
+    startEvolutionWatchers(evolutionStateDir);
     registerHandlers();
     createWindow();
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -71,8 +71,41 @@ export const FEISHU_MCP_PRESET: McpServerDefinition = {
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/;
 const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const HTTP_HEADER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SENSITIVE_KEY_PATTERN = /(SECRET|TOKEN|KEY|PASSWORD|PASSWD|AUTH|CREDENTIAL)/i;
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const STALE_MCP_LOCK_MS = 10 * 60 * 1000;
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function isValidParamKey(key: string, transport: "stdio" | "http"): boolean {
+  if (FORBIDDEN_KEYS.has(key)) return false;
+  return transport === "http" ? HTTP_HEADER_KEY_PATTERN.test(key) : ENV_KEY_PATTERN.test(key);
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (isRecord(value)) {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = canonicalJsonValue(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function canonicalJsonStringify(value: unknown): string {
+  return JSON.stringify(canonicalJsonValue(value));
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -149,7 +182,7 @@ export function assertMcpServerDefinition(value: unknown): asserts value is McpS
   }
   const seenKeys = new Set<string>();
   for (const field of value.envSchema) {
-    if (!isRecord(field) || typeof field.key !== "string" || !ENV_KEY_PATTERN.test(field.key) ||
+    if (!isRecord(field) || typeof field.key !== "string" || !isValidParamKey(field.key, value.transport) ||
       typeof field.label !== "string" || !field.label.trim() || seenKeys.has(field.key)) {
       throw new Error("MCP 参数声明包含非法或重复字段名");
     }
@@ -171,7 +204,7 @@ function checkedEnvValues(definition: McpServerDefinition, rawEnv: Record<string
   }
   for (const [key, value] of Object.entries(rawEnv)) {
     if (Object.hasOwn(result, key)) continue;
-    if (!ENV_KEY_PATTERN.test(key) || FORBIDDEN_KEYS.has(key)) throw new Error(`参数名不合法：${key}`);
+    if (!isValidParamKey(key, definition.transport)) throw new Error(`参数名不合法：${key}`);
     if (typeof value !== "string" || /[\r\n\0]/.test(value)) throw new Error(`参数 ${key} 内容不合法`);
     if (value) result[key] = value;
   }
@@ -289,43 +322,91 @@ function extractDelimitedBlock(content: string, id: string): { block?: string; s
   };
 }
 
-function maskCodexTomlText(content: string): string {
+function maskCodexTomlText(
+  content: string,
+  extraSecretKeys?: ReadonlyMap<string, ReadonlySet<string>>,
+): string {
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  let currentServerId: string | undefined;
+  let inSensitiveTable = false;
   return content
+    .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => {
-      const match = /^(\s*)([A-Za-z0-9_.-]+)(\s*=\s*)"((?:\\.|[^"\\])*)"(.*)$/.exec(line);
-      if (!match || !match[2] || match[4] === undefined) return line;
-      if (!SENSITIVE_KEY_PATTERN.test(match[2])) return line;
-      let decoded = match[4];
+      const headerMatch = /^\s*\[mcp_servers\.(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))(?:\.(env|http_headers))?\]\s*$/.exec(line);
+      if (headerMatch) {
+        currentServerId = headerMatch[1] ?? headerMatch[2] ?? headerMatch[3];
+        inSensitiveTable = headerMatch[4] === "env" || headerMatch[4] === "http_headers";
+        return line;
+      }
+      if (/^\s*\[/.test(line)) {
+        currentServerId = undefined;
+        inSensitiveTable = false;
+        return line;
+      }
+      const match = /^(\s*)(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))(\s*=\s*)"((?:\\.|[^"\\])*)"(.*)$/.exec(line);
+      if (!match || match[6] === undefined) return line;
+      const keyName = match[2] ?? match[3] ?? match[4];
+      if (!keyName) return line;
+      const schemaSecrets = currentServerId && inSensitiveTable ? extraSecretKeys?.get(currentServerId) : undefined;
+      if (!SENSITIVE_KEY_PATTERN.test(keyName) && !schemaSecrets?.has(keyName)) return line;
+      let decoded = match[6];
       try {
-        const parsed: unknown = JSON.parse(`"${match[4]}"`);
+        const parsed: unknown = JSON.parse(`"${match[6]}"`);
         if (typeof parsed === "string") decoded = parsed;
       } catch {
         // 保留原转义片段脱敏。
       }
-      return `${match[1]}${match[2]}${match[3]}${JSON.stringify(maskSecretValue(decoded))}${match[5]}`;
+      const keyToken = match[2] !== undefined ? `"${match[2]}"` : match[3] !== undefined ? `'${match[3]}'` : keyName;
+      return `${match[1]}${keyToken}${match[5]}${JSON.stringify(maskSecretValue(decoded))}${match[7]}`;
     })
-    .join("\n");
+    .join(eol);
 }
 
-function mergeCodexToml(existing: string, id: string, nextBlock: string | undefined): string {
-  const extracted = extractDelimitedBlock(existing, id);
-  if (!extracted.valid) throw new Error(`Codex 配置文件中 ${id} 的受控区块边界不完整`);
+function mergeCodexToml(
+  existing: string,
+  id: string,
+  nextBlock: string | undefined,
+  allowBrokenMarkerRepair = false,
+): string {
+  const eol = existing.includes("\r\n") ? "\r\n" : "\n";
+  const normalized = existing.replace(/\r\n/g, "\n");
+  const normalizedBlock = nextBlock?.replace(/\r\n/g, "\n");
+  const extracted = extractDelimitedBlock(normalized, id);
+  if (!extracted.valid) {
+    if (!allowBrokenMarkerRepair) throw new Error(`Codex 配置文件中 ${id} 的受控区块边界不完整`);
+    // 修复模式：剥离受损标记行与同名 mcp_servers 段落后重新插入干净受控区块。
+    const { start: startMarker, end: endMarker } = codexMarkers(id);
+    const keptLines: string[] = [];
+    let skippingSection = false;
+    const sectionHeader = new RegExp(`^\\s*\\[mcp_servers\\.(?:${id}|"${id}"|'${id}')(?:\\s*\\.|\\s*\\])`);
+    for (const line of normalized.split("\n")) {
+      if (line.includes(startMarker) || line.includes(endMarker)) continue;
+      if (/^\s*\[/.test(line)) {
+        skippingSection = sectionHeader.test(line);
+      }
+      if (!skippingSection) keptLines.push(line);
+    }
+    const cleaned = keptLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (normalizedBlock === undefined) return cleaned ? `${cleaned}${eol}`.replace(/\n/g, eol) : "";
+    const rebuilt = cleaned ? `${cleaned}\n\n${normalizedBlock}\n` : `${normalizedBlock}\n`;
+    return rebuilt.replace(/\n/g, eol);
+  }
   if (extracted.block !== undefined) {
-    if (nextBlock === undefined) {
-      const before = existing.slice(0, extracted.start);
-      const after = existing.slice(extracted.end);
+    if (normalizedBlock === undefined) {
+      const before = normalized.slice(0, extracted.start);
+      const after = normalized.slice(extracted.end);
       const trimmedBefore = before.endsWith("\n\n") ? before.slice(0, -1) : before;
       const trimmedAfter = after.startsWith("\n") ? after.slice(1) : after;
       const combined = `${trimmedBefore}${trimmedAfter}`;
-      return combined.trim() ? combined : "";
+      return combined.trim() ? combined.replace(/\n/g, eol) : "";
     }
-    return `${existing.slice(0, extracted.start)}${nextBlock}${existing.slice(extracted.end)}`;
+    return `${normalized.slice(0, extracted.start)}${normalizedBlock}${normalized.slice(extracted.end)}`.replace(/\n/g, eol);
   }
-  if (nextBlock === undefined) return existing;
-  if (!existing.trim()) return `${nextBlock}\n`;
-  const sep = existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
-  return `${existing}${sep}${nextBlock}\n`;
+  if (normalizedBlock === undefined) return existing;
+  if (!normalized.trim()) return `${normalizedBlock}\n`.replace(/\n/g, eol);
+  const sep = normalized.endsWith("\n\n") ? "" : normalized.endsWith("\n") ? "\n" : "\n\n";
+  return `${normalized}${sep}${normalizedBlock}\n`.replace(/\n/g, eol);
 }
 
 async function readTargetFile(targetPath: string): Promise<{ existed: boolean; text: string }> {
@@ -387,6 +468,81 @@ export class McpConfigEngine {
     private readonly targets: Record<McpToolId, string>,
   ) {}
 
+  clearPending(): void {
+    this.pending.clear();
+  }
+
+  private async acquireLock(): Promise<string> {
+    await assertAssetDirectory(this.receiptsRoot);
+    await mkdir(this.receiptsRoot, { recursive: true });
+    const lock = path.join(this.receiptsRoot, ".mcp-operation-lock");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await mkdir(lock);
+        await writeFile(
+          path.join(lock, "lock.json"),
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+          { mode: 0o600 },
+        );
+        return lock;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          if (attempt === 0) {
+            let stale = false;
+            try {
+              const parsed: unknown = JSON.parse(await readFile(path.join(lock, "lock.json"), "utf8"));
+              if (isRecord(parsed) && typeof parsed.pid === "number" && !isPidAlive(parsed.pid)) {
+                stale = true;
+              }
+            } catch {
+              try {
+                const info = await lstat(lock);
+                if (Date.now() - info.mtimeMs > STALE_MCP_LOCK_MS) stale = true;
+              } catch {
+                stale = false;
+              }
+            }
+            if (stale) {
+              await rm(lock, { recursive: true, force: true });
+              continue;
+            }
+          }
+          throw new Error("另一个 MCP 配置写入操作尚未结束");
+        }
+        throw error;
+      }
+    }
+    throw new Error("另一个 MCP 配置写入操作尚未结束");
+  }
+
+  /** 仅在用户显式确认接管时补写本地 MCP 回执；绝不修改目标工具配置文件，也绝不覆盖已有回执。 */
+  async adoptReceipt(receipt: McpReceipt): Promise<McpReceipt> {
+    assertMcpReceipt(receipt, receipt.toolId, receipt.id);
+    const lock = await this.acquireLock();
+    try {
+      const file = this.receiptFile(receipt.toolId, receipt.id);
+      if (await exists(file)) throw new Error("此 MCP 已有安装记录，拒绝覆盖");
+      await atomicWriteSecure(file, `${JSON.stringify(receipt, null, 2)}\n`);
+      return receipt;
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+    }
+  }
+
+  /** 显式移除本地 MCP 回执（不修改目标工具配置文件），用于解除冲突/损坏配置死锁或清理失效记录。 */
+  async forgetReceipt(toolId: McpToolId, id: string): Promise<void> {
+    if (!Object.hasOwn(this.targets, toolId)) throw new Error("不支持的 MCP 目标工具");
+    const lock = await this.acquireLock();
+    try {
+      const file = this.receiptFile(toolId, id);
+      if (!(await exists(file))) throw new Error("智枢没有该 MCP 在所选工具的安装记录");
+      await rm(file, { force: true });
+      this.pending.clear();
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+    }
+  }
+
   private receiptFile(toolId: McpToolId, id: string): string {
     if (!ID_PATTERN.test(id)) throw new Error("MCP 标识无效");
     return path.join(this.receiptsRoot, `${toolId}--${id}.json`);
@@ -443,13 +599,15 @@ export class McpConfigEngine {
       if (!isRecord(parsed) || !isRecord(parsed.mcpServers) || !isRecord(parsed.mcpServers[receipt.id])) {
         return [`配置文件中缺少受管 MCP 项：${receipt.id}`];
       }
-      const entryDigest = sha256(JSON.stringify(parsed.mcpServers[receipt.id]));
-      if (entryDigest !== receipt.managedEntryDigest) {
+      const canonicalDigest = sha256(canonicalJsonStringify(parsed.mcpServers[receipt.id]));
+      const legacyDigest = sha256(JSON.stringify(parsed.mcpServers[receipt.id]));
+      if (canonicalDigest !== receipt.managedEntryDigest && legacyDigest !== receipt.managedEntryDigest) {
         return [`受管 MCP 配置已发生漂移：${receipt.id}`];
       }
       return [];
     }
-    const extracted = extractDelimitedBlock(target.text, receipt.id);
+    const normalizedToml = target.text.replace(/\r\n/g, "\n");
+    const extracted = extractDelimitedBlock(normalizedToml, receipt.id);
     if (!extracted.valid) return [`Codex 配置文件中 ${receipt.id} 的受控区块边界不完整`];
     if (!extracted.block) return [`Codex 配置文件中缺少受管 MCP 区块：${receipt.id}`];
     if (sha256(extracted.block) !== receipt.managedEntryDigest) {
@@ -463,7 +621,13 @@ export class McpConfigEngine {
     toolId: McpToolId,
     definition: McpServerDefinition,
     rawEnvValues: Record<string, string> = {},
+    options: {
+      allowConflictOverride?: boolean;
+      allSchemas?: ReadonlyMap<string, readonly McpEnvField[]>;
+      allSecretKeys?: ReadonlyMap<string, readonly string[]>;
+    } = {},
   ): Promise<McpPreview> {
+    const allowConflictOverride = options.allowConflictOverride === true;
     if (!Object.hasOwn(this.targets, toolId)) throw new Error("不支持的 MCP 目标工具");
     assertMcpServerDefinition(definition);
     const targetPath = this.targets[toolId];
@@ -475,7 +639,34 @@ export class McpConfigEngine {
 
     const envValues = action === "uninstall" ? {} : checkedEnvValues(definition, rawEnvValues);
     const target = await readTargetFile(targetPath);
-    const conflicts: string[] = previous ? await this.validate(previous) : [];
+    const conflicts: string[] = previous && !allowConflictOverride ? await this.validate(previous) : [];
+
+    // 合并全部已知 MCP 敏感键集合，避免预览时误泄自定义 secret: true 字段。
+    const schemaMap = new Map<string, readonly McpEnvField[]>();
+    if (options.allSchemas) {
+      for (const [k, v] of options.allSchemas) schemaMap.set(k, v);
+    }
+    schemaMap.set(definition.id, definition.envSchema);
+    const secretKeysMap = new Map<string, Set<string>>();
+    for (const [k, fields] of schemaMap) {
+      const set = secretKeysMap.get(k) ?? new Set<string>();
+      for (const field of fields) {
+        if (field.secret) set.add(field.key);
+      }
+      secretKeysMap.set(k, set);
+    }
+    if (options.allSecretKeys) {
+      for (const [k, keys] of options.allSecretKeys) {
+        const set = secretKeysMap.get(k) ?? new Set<string>();
+        for (const key of keys) set.add(key);
+        secretKeysMap.set(k, set);
+      }
+    }
+    if (previous?.secretKeys.length) {
+      const set = secretKeysMap.get(definition.id) ?? new Set<string>();
+      for (const key of previous.secretKeys) set.add(key);
+      secretKeysMap.set(definition.id, set);
+    }
 
     let nextRawText = "";
     let maskedBefore = "";
@@ -484,65 +675,98 @@ export class McpConfigEngine {
 
     if (toolId === "antigravity") {
       let parsed: Record<string, unknown> = {};
+      let jsonBroken = false;
       if (target.existed && target.text.trim()) {
         let rawParsed: unknown;
         try {
           rawParsed = JSON.parse(target.text);
         } catch {
-          throw new Error(`无法解析现有配置 JSON：${targetPath}`);
+          jsonBroken = true;
+          if (!conflicts.some((c) => c.includes("不是合法 JSON"))) {
+            conflicts.push(`无法解析现有配置 JSON：${targetPath}`);
+          }
         }
-        if (!isRecord(rawParsed)) throw new Error(`配置文件根节点必须是 JSON 对象：${targetPath}`);
-        parsed = rawParsed;
+        if (!jsonBroken) {
+          if (!isRecord(rawParsed)) {
+            jsonBroken = true;
+            conflicts.push(`配置文件根节点必须是 JSON 对象：${targetPath}`);
+          } else {
+            parsed = rawParsed;
+          }
+        }
       }
-      const existingServers: Record<string, unknown> = isRecord(parsed.mcpServers) ? { ...parsed.mcpServers } : {};
-      if (!previous && Object.hasOwn(existingServers, definition.id)) {
-        conflicts.push(`配置文件中已存在同名的未知 MCP 配置：${definition.id}，拒绝覆盖`);
-      }
-
-      const schemaMap = new Map<string, readonly McpEnvField[]>([[definition.id, definition.envSchema]]);
-      maskedBefore = target.existed
-        ? `${JSON.stringify(maskAnyAntigravityJson(parsed, schemaMap), null, 2)}\n`
-        : "（目标文件尚未创建）";
-
-      const nextServers = { ...existingServers };
-      const nextMaskedServers: Record<string, unknown> = isRecord(maskAnyAntigravityJson(parsed, schemaMap).mcpServers)
-        ? { ...(maskAnyAntigravityJson(parsed, schemaMap).mcpServers as Record<string, unknown>) }
-        : {};
-
-      if (action === "uninstall") {
-        delete nextServers[definition.id];
-        delete nextMaskedServers[definition.id];
+      if (jsonBroken) {
+        maskedBefore = target.text;
+        maskedAfter = "（现有配置文件 JSON 损坏，无法自动合并，请先修复文件或仅清除智枢记录）";
       } else {
-        const realEntry = buildAntigravityEntry(definition, envValues, false);
-        const maskedEntry = buildAntigravityEntry(definition, envValues, true);
-        managedEntryDigest = sha256(JSON.stringify(realEntry));
-        nextServers[definition.id] = realEntry;
-        nextMaskedServers[definition.id] = maskedEntry;
-      }
+        const existingServers: Record<string, unknown> = isRecord(parsed.mcpServers) ? { ...parsed.mcpServers } : {};
+        if (!previous && !allowConflictOverride && Object.hasOwn(existingServers, definition.id)) {
+          conflicts.push(`配置文件中已存在同名的未知 MCP 配置：${definition.id}，拒绝覆盖`);
+        }
 
-      const nextRoot = { ...parsed, mcpServers: nextServers };
-      const nextMaskedRoot = { ...parsed, mcpServers: nextMaskedServers };
-      nextRawText = `${JSON.stringify(nextRoot, null, 2)}\n`;
-      maskedAfter = `${JSON.stringify(nextMaskedRoot, null, 2)}\n`;
-    } else {
-      const unmanagedSection = new RegExp(`^\\[mcp_servers\\.${definition.id}(?:\\.|\\])`, "m");
-      const existingBlock = extractDelimitedBlock(target.text, definition.id);
-      if (!existingBlock.valid) {
-        conflicts.push(`Codex 配置文件中 ${definition.id} 的受控区块边界不完整`);
+        const maskedExisting = maskAnyAntigravityJson(parsed, schemaMap);
+        // 同步按 persisted secretKeys 脱敏其它已装自定义 MCP
+        if (isRecord(maskedExisting.mcpServers)) {
+          for (const [serverKey, serverVal] of Object.entries(maskedExisting.mcpServers)) {
+            const extraKeys = secretKeysMap.get(serverKey);
+            if (!extraKeys?.size || !isRecord(serverVal)) continue;
+            for (const sub of ["env", "headers"] as const) {
+              if (!isRecord(serverVal[sub])) continue;
+              const subObj = serverVal[sub] as Record<string, unknown>;
+              for (const key of extraKeys) {
+                if (typeof subObj[key] === "string") subObj[key] = maskSecretValue(subObj[key] as string);
+              }
+            }
+          }
+        }
+        maskedBefore = target.existed
+          ? `${JSON.stringify(maskedExisting, null, 2)}\n`
+          : "（目标文件尚未创建）";
+
+        const nextServers = { ...existingServers };
+        const nextMaskedServers: Record<string, unknown> = isRecord(maskedExisting.mcpServers)
+          ? { ...(maskedExisting.mcpServers as Record<string, unknown>) }
+          : {};
+
+        if (action === "uninstall") {
+          delete nextServers[definition.id];
+          delete nextMaskedServers[definition.id];
+        } else {
+          const realEntry = buildAntigravityEntry(definition, envValues, false);
+          const maskedEntry = buildAntigravityEntry(definition, envValues, true);
+          managedEntryDigest = sha256(canonicalJsonStringify(realEntry));
+          nextServers[definition.id] = realEntry;
+          nextMaskedServers[definition.id] = maskedEntry;
+        }
+
+        const nextRoot = { ...parsed, mcpServers: nextServers };
+        const nextMaskedRoot = { ...maskedExisting, mcpServers: nextMaskedServers };
+        nextRawText = `${JSON.stringify(nextRoot, null, 2)}\n`;
+        maskedAfter = `${JSON.stringify(nextMaskedRoot, null, 2)}\n`;
       }
-      if (!previous && unmanagedSection.test(target.text)) {
+    } else {
+      const unmanagedSection = new RegExp(`^\\s*\\[mcp_servers\\.(?:${definition.id}|"${definition.id}"|'${definition.id}')(?:\\s*\\.|\\s*\\])`, "m");
+      const existingBlock = extractDelimitedBlock(target.text.replace(/\r\n/g, "\n"), definition.id);
+      if (!existingBlock.valid && !allowConflictOverride) {
+        if (!conflicts.some((c) => c.includes("受控区块边界不完整"))) {
+          conflicts.push(`Codex 配置文件中 ${definition.id} 的受控区块边界不完整`);
+        }
+      }
+      if (!previous && !allowConflictOverride && unmanagedSection.test(target.text)) {
         conflicts.push(`Codex 配置中已存在同名的未知 MCP 段落 [mcp_servers.${definition.id}]，拒绝覆盖`);
       }
-      maskedBefore = target.existed ? maskCodexTomlText(target.text) : "（目标文件尚未创建）";
-      if (action === "uninstall") {
-        nextRawText = mergeCodexToml(target.text, definition.id, undefined);
-        maskedAfter = nextRawText ? maskCodexTomlText(nextRawText) : "（受管区块已移除）";
+      maskedBefore = target.existed ? maskCodexTomlText(target.text, secretKeysMap) : "（目标文件尚未创建）";
+      if (!existingBlock.valid && !allowConflictOverride) {
+        maskedAfter = "（现有配置受控区块边界损坏，请选择「覆盖修复」重建受控区块或先手工修正）";
+      } else if (action === "uninstall") {
+        nextRawText = mergeCodexToml(target.text, definition.id, undefined, allowConflictOverride);
+        maskedAfter = nextRawText ? maskCodexTomlText(nextRawText, secretKeysMap) : "（受管区块已移除）";
       } else {
         const realBlock = renderCodexBlock(definition, envValues, false);
         const maskedBlock = renderCodexBlock(definition, envValues, true);
         managedEntryDigest = sha256(realBlock);
-        nextRawText = mergeCodexToml(target.text, definition.id, realBlock);
-        maskedAfter = mergeCodexToml(maskCodexTomlText(target.text), definition.id, maskedBlock);
+        nextRawText = mergeCodexToml(target.text, definition.id, realBlock, allowConflictOverride);
+        maskedAfter = mergeCodexToml(maskCodexTomlText(target.text, secretKeysMap), definition.id, maskedBlock, allowConflictOverride);
       }
     }
 
@@ -598,17 +822,7 @@ export class McpConfigEngine {
     if (!plan) throw new Error("MCP 变更预览已失效，请重新预览");
     if (plan.preview.conflicts.length) throw new Error("存在冲突，拒绝写入 MCP 配置");
 
-    await assertAssetDirectory(this.receiptsRoot);
-    await mkdir(this.receiptsRoot, { recursive: true });
-    const lock = path.join(this.receiptsRoot, ".mcp-operation-lock");
-    try {
-      await mkdir(lock);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new Error("另一个 MCP 配置写入操作尚未结束");
-      }
-      throw error;
-    }
+    const lock = await this.acquireLock();
 
     const { preview, beforeRawText, beforeExisted, nextRawText, nextReceipt, previousReceiptText } = plan;
     const receiptPath = this.receiptFile(preview.toolId, preview.id);
@@ -619,6 +833,7 @@ export class McpConfigEngine {
       const currentTarget = await readTargetFile(preview.targetPath);
       const currentReceipt = await this.loadReceipt(preview.toolId, preview.id);
       if (currentTarget.existed !== beforeExisted || currentTarget.text !== beforeRawText || currentReceipt.text !== previousReceiptText) {
+        this.pending.delete(token);
         throw new Error("目标配置文件在预览后发生变化，请重新预览");
       }
       await atomicWriteSecure(preview.targetPath, nextRawText);

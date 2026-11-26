@@ -787,69 +787,69 @@ function inferRulepackTargetFromText(text: string): { targetRulepack: string; ta
     return {
       targetRulepack: "ui-design",
       targetPath: "rulepacks/ui-design/其他规则/07-XR空间界面规范.md",
-      anchorHeading: "## 2. 视距、视野角与物理可读性参数",
+      anchorHeading: "## 2. 空间尺度、视距与角尺寸换算",
     };
   }
   if (/(pico|pxr|openxr)/.test(lower)) {
     return {
       targetRulepack: "pico",
       targetPath: "rulepacks/pico/PICO Unity SDK.md",
-      anchorHeading: "## 2. 接入与核心能力",
+      anchorHeading: "## 2. 候选路线识别",
     };
   }
   if (/(unity|monobehaviour|shader|urp|hdrp|prefab)/.test(lower)) {
     return {
       targetRulepack: "unity",
       targetPath: "rulepacks/unity/00-文档总览.md",
-      anchorHeading: "## 核心规范",
+      anchorHeading: "## 1. 核心原则",
     };
   }
   if (/(typescript|\bts\b|tsconfig|类型守卫|unknown|noexplicitany|any)/.test(lower)) {
     return {
       targetRulepack: "typescript",
       targetPath: "rulepacks/typescript/其他规则/08-常见反模式与 AI 自检.md",
-      anchorHeading: "## AI 自检清单",
+      anchorHeading: "## 1. 🔴 高风险反模式与适用边界",
     };
   }
   if (/(javascript|\bjs\b|esm|node:test|promise|async)/.test(lower)) {
     return {
       targetRulepack: "javascript",
       targetPath: "rulepacks/javascript/15-AI通用入口规则.md",
-      anchorHeading: "## 核心约束",
+      anchorHeading: "## 3. 变更边界",
     };
   }
   if (/(golang|\bgo\b|goroutine|context\.context|defer)/.test(lower)) {
     return {
       targetRulepack: "go",
-      targetPath: "rulepacks/go/15-AI通用入口规则.md",
-      anchorHeading: "## 核心约束",
+      targetPath: "rulepacks/go/13-AI通用入口规则.md",
+      anchorHeading: "## 3. 变更边界",
     };
   }
   if (/(python|pytest|pydantic|venv|typing)/.test(lower)) {
     return {
       targetRulepack: "python",
-      targetPath: "rulepacks/python/15-AI通用入口规则.md",
-      anchorHeading: "## 核心约束",
+      targetPath: "rulepacks/python/14-AI通用入口规则.md",
+      anchorHeading: "## 3. 变更边界",
     };
   }
   if (/(prd|需求文档|泳道图|验收标准|产品结构)/.test(lower)) {
     return {
       targetRulepack: "product-pm",
       targetPath: "rulepacks/product-pm/15-AI通用入口规则.md",
-      anchorHeading: "## 核心原则",
+      anchorHeading: "## 3. 决策与边界约束",
     };
   }
   if (/(figma|设计令牌|设计系统|无障碍|wcag|下拉框|dropdown)/.test(lower)) {
     return {
       targetRulepack: "ui-design",
       targetPath: "rulepacks/ui-design/其他规则/02-交互设计规则.md",
-      anchorHeading: "## 关键交互规范",
+      anchorHeading: "## 2. 任务流程与 UI 覆盖",
     };
   }
   return {
     targetRulepack: "common",
     targetPath: "rulepacks/common/entry.md",
-    anchorHeading: "## 工作准则",
+    anchorHeading: "## 1. 优先级",
   };
 }
 
@@ -1153,24 +1153,70 @@ export async function watchOfficialDocs(
     });
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
+    const timeoutErr = new Error("请求超时");
+    timeoutErr.name = "TimeoutError";
+    const timer = setTimeout(() => controller.abort(timeoutErr), timeoutMs);
     const onParentAbort = () => controller.abort(options.signal?.reason ?? new Error("用户取消巡检"));
     options.signal?.addEventListener("abort", onParentAbort, { once: true });
 
     try {
       const safeUrl = assertSafeWatchUrl(source.url);
-      const response = await fetcher(safeUrl, {
-        method: "GET",
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "ZhiShu-DocsWatch/2.1 (+https://github.com/yadan177/ZhiShu)",
-          Accept: "text/html, text/markdown, text/plain;q=0.9",
-        },
-      });
+      let currentUrl = safeUrl;
+      let response: Response | undefined;
+      for (let hop = 0; hop <= 5; hop++) {
+        const res = await fetcher(currentUrl, {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "ZhiShu-DocsWatch/2.2 (+https://github.com/yadan177/ZhiShu)",
+            Accept: "text/html, text/markdown, text/plain;q=0.9",
+          },
+        });
+        if (res.status >= 300 && res.status < 400) {
+          void res.body?.cancel().catch(() => {});
+          const location = res.headers.get("location");
+          if (!location) throw new Error("巡检目标重定向缺少 Location 头");
+          const nextUrl = new URL(location, currentUrl).toString();
+          currentUrl = assertSafeWatchUrl(nextUrl);
+          continue;
+        }
+        response = res;
+        break;
+      }
+      if (!response) throw new Error("巡检目标重定向次数过多，已中止");
       if (!response.ok) {
+        void response.body?.cancel().catch(() => {});
         throw new Error(`HTTP ${response.status} ${response.statusText || ""}`.trim());
       }
-      const rawBody = (await response.text()).slice(0, 500_000);
+      const maxBodyBytes = 512 * 1024;
+      let rawBody: string;
+      if (response.body) {
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value || value.byteLength === 0) continue;
+            const remaining = maxBodyBytes - total;
+            if (value.byteLength >= remaining) {
+              chunks.push(value.subarray(0, remaining));
+              total += remaining;
+              await reader.cancel().catch(() => {});
+              break;
+            }
+            chunks.push(value);
+            total += value.byteLength;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        rawBody = Buffer.concat(chunks).toString("utf8");
+      } else {
+        rawBody = (await response.text()).slice(0, maxBodyBytes);
+      }
       const contentType = response.headers.get("content-type") ?? "";
       const jsonDoc =
         contentType.includes("application/json") || rawBody.trimStart().startsWith("{")
@@ -1202,6 +1248,18 @@ export async function watchOfficialDocs(
         }
       }
 
+      if (!localRuleText) {
+        results.push({
+          sourceId: source.id,
+          sourceName: source.name,
+          url: safeUrl,
+          status: "ok",
+          hasDiff: false,
+          message: "未配置可比对的本地规则源（或本地目标文件缺失），已验证远端文档可达",
+        });
+        continue;
+      }
+
       const remoteSignals = extractVersionAndParamSignals(plainText);
       const localLower = localRuleText.toLowerCase();
       const missingSignals = [...remoteSignals]
@@ -1219,7 +1277,7 @@ export async function watchOfficialDocs(
         .slice(0, 5);
 
       const missingKeywords = source.keywords.filter(
-        (kw) => plainText.toLowerCase().includes(kw.toLowerCase()) && localRuleText && !localLower.includes(kw.toLowerCase()),
+        (kw) => plainText.toLowerCase().includes(kw.toLowerCase()) && !localLower.includes(kw.toLowerCase()),
       );
 
       // 防噪：单靠 1 个宽泛词命中且无明确版本/参数信号时不产出低质空泛提案
@@ -1311,11 +1369,13 @@ export async function watchOfficialDocs(
     }
   }
 
-  options.onProgress?.({
-    completed: enabledSources.length,
-    total: enabledSources.length,
-    currentSourceName: "",
-  });
+  if (!cancelled) {
+    options.onProgress?.({
+      completed: enabledSources.length,
+      total: enabledSources.length,
+      currentSourceName: "",
+    });
+  }
 
   const succeededCount = results.filter((r) => r.status === "ok").length;
   const failedCount = results.filter((r) => r.status === "error").length;
@@ -1384,21 +1444,64 @@ export class EvolutionStore {
     this.lockFile = path.join(stateRoot, ".evolution-operation-lock");
   }
 
+  private static isPidAlive(pid: number): boolean {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  }
+
   private async withExclusiveLock<T>(action: () => Promise<T>): Promise<T> {
     await assertAssetDirectory(this.stateRoot);
     await mkdir(this.stateRoot, { recursive: true });
-    try {
-      const handle = await open(this.lockFile, "wx", 0o600);
+    let acquired = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), "utf8");
-      } finally {
-        await handle.close();
+        const handle = await open(this.lockFile, "wx", 0o600);
+        try {
+          await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), "utf8");
+        } finally {
+          await handle.close();
+        }
+        acquired = true;
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          let reclaimed = false;
+          try {
+            const raw = await readFile(this.lockFile, "utf8");
+            const parsed: unknown = JSON.parse(raw);
+            if (isRecord(parsed) && typeof parsed.pid === "number" && !EvolutionStore.isPidAlive(parsed.pid)) {
+              await rm(this.lockFile, { force: true });
+              reclaimed = true;
+            }
+          } catch {
+            try {
+              const stat = await lstat(this.lockFile);
+              if (Date.now() - stat.mtimeMs > 10 * 60 * 1000) {
+                await rm(this.lockFile, { force: true });
+                reclaimed = true;
+              }
+            } catch {
+              // 锁已被其他进程释放，进入下次重试
+              reclaimed = true;
+            }
+          }
+          if (reclaimed) continue;
+          if (attempt < 4) {
+            await new Promise((resolve) => setTimeout(resolve, 40 * (attempt + 1)));
+            continue;
+          }
+          throw new Error("已有另一个规则进化写入事务正在进行，请稍后重试");
+        }
+        throw error;
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new Error("已有另一个规则进化写入事务正在进行，请稍后重试");
-      }
-      throw error;
+    }
+    if (!acquired) {
+      throw new Error("已有另一个规则进化写入事务正在进行，请稍后重试");
     }
     try {
       return await action();
@@ -1487,29 +1590,31 @@ export class EvolutionStore {
   }
 
   async saveWatchSources(sources: readonly WatchSourceConfig[]): Promise<WatchSourceConfig[]> {
-    const seen = new Set<string>();
-    const normalized: WatchSourceConfig[] = [];
-    for (const item of sources) {
-      assertWatchSourceConfig(item);
-      if (seen.has(item.id)) {
-        throw new Error(`巡检源标识重复：${item.id}`);
+    return this.withExclusiveLock(async () => {
+      const seen = new Set<string>();
+      const normalized: WatchSourceConfig[] = [];
+      for (const item of sources) {
+        assertWatchSourceConfig(item);
+        if (seen.has(item.id)) {
+          throw new Error(`巡检源标识重复：${item.id}`);
+        }
+        seen.add(item.id);
+        normalized.push({
+          ...item,
+          url: assertSafeWatchUrl(item.url),
+          keywords: [...new Set(item.keywords.map((kw) => kw.trim()).filter(Boolean))],
+        });
       }
-      seen.add(item.id);
-      normalized.push({
-        ...item,
-        url: assertSafeWatchUrl(item.url),
-        keywords: [...new Set(item.keywords.map((kw) => kw.trim()).filter(Boolean))],
-      });
-    }
-    await atomicWriteFile(
-      this.watchSourcesFile,
-      `${JSON.stringify({ schemaVersion: 1, sources: normalized }, null, 2)}\n`,
-      0o600,
-    );
-    return normalized;
+      await atomicWriteFile(
+        this.watchSourcesFile,
+        `${JSON.stringify({ schemaVersion: 1, sources: normalized }, null, 2)}\n`,
+        0o600,
+      );
+      return normalized;
+    });
   }
 
-  async list(options: { now?: Date } = {}): Promise<EvolutionListResult> {
+  private async listUnlocked(options: { now?: Date; persistStale?: boolean } = {}): Promise<EvolutionListResult> {
     await assertAssetDirectory(this.stateRoot);
     const proposals: EvolutionProposal[] = [];
     if (await pathExists(this.proposalsDir)) {
@@ -1536,7 +1641,9 @@ export class EvolutionStore {
               status: "stale",
               updatedAt: new Date(nowMs).toISOString(),
             };
-            await this.writeProposal(proposal);
+            if (options.persistStale !== false) {
+              await this.writeProposal(proposal);
+            }
           }
         }
         proposals.push(proposal);
@@ -1566,6 +1673,10 @@ export class EvolutionStore {
         total: proposals.length,
       },
     };
+  }
+
+  async list(options: { now?: Date } = {}): Promise<EvolutionListResult> {
+    return this.withExclusiveLock(() => this.listUnlocked({ ...options, persistStale: true }));
   }
 
   async capture(
@@ -1615,64 +1726,70 @@ export class EvolutionStore {
       afterSnippet: input.afterSnippet,
     });
 
-    const existingList = await this.list();
-    const existingDuplicate = existingList.proposals.find(
-      (item) =>
-        item.fingerprint === fingerprint &&
-        (item.status === "pending" || item.status === "conflict" || item.status === "stale"),
-    );
-    if (existingDuplicate) {
-      return { outcome: "duplicate", proposal: existingDuplicate, fingerprint };
-    }
-
-    const rejected = await this.loadRejectedFingerprints();
-    if (!options.allowPreviouslyRejected && Object.hasOwn(rejected, fingerprint)) {
-      return { outcome: "previously-rejected", fingerprint };
-    }
-
-    let targetBaseDigest = input.targetBaseDigest;
-    if (!targetBaseDigest && options.targetSourceRoot) {
-      try {
-        const targetFile = await assertNoSymlinkBelow(options.targetSourceRoot, targetPath);
-        const content = await readFile(targetFile, "utf8");
-        targetBaseDigest = assetDigest(content);
-      } catch {
-        // 目标文件尚未在本地检出时留空，审阅预览阶段会重新核验
+    return this.withExclusiveLock(async () => {
+      const existingList = await this.listUnlocked({ persistStale: false });
+      const existingDuplicate = existingList.proposals.find(
+        (item) =>
+          item.fingerprint === fingerprint &&
+          (item.status === "pending" || item.status === "conflict" || item.status === "stale" || item.status === "approved"),
+      );
+      if (existingDuplicate) {
+        return { outcome: "duplicate", proposal: existingDuplicate, fingerprint };
       }
-    }
 
-    const nowIso = new Date().toISOString();
-    const id = input.id && PROPOSAL_ID_PATTERN.test(input.id) ? input.id : generateProposalId(input.channel, title);
-    const proposal: EvolutionProposal = {
-      schemaVersion: 1,
-      id,
-      channel: input.channel,
-      targetKind: input.targetKind,
-      operation: input.operation,
-      status: "pending",
-      title,
-      ...(input.summary?.trim() ? { summary: input.summary.trim() } : {}),
-      ...(input.targetRulepack?.trim() ? { targetRulepack: input.targetRulepack.trim() } : {}),
-      targetPath,
-      anchorHeading,
-      ...(input.beforeSnippet !== undefined ? { beforeSnippet: normalizeNewlines(input.beforeSnippet) } : {}),
-      ...(input.afterSnippet !== undefined ? { afterSnippet: normalizeNewlines(input.afterSnippet) } : {}),
-      evidence: input.evidence.map((ev) => ({
-        sourceLabel: ev.sourceLabel.trim(),
-        summary: ev.summary.trim(),
-        ...(ev.url ? { url: assertSafeWatchUrl(ev.url) } : {}),
-        ...(ev.verifiedAt ? { verifiedAt: ev.verifiedAt } : {}),
-        ...(ev.projectNames?.length ? { projectNames: [...ev.projectNames] } : {}),
-      })),
-      fingerprint,
-      ...(targetBaseDigest ? { targetBaseDigest } : {}),
-      createdAt: input.createdAt ?? nowIso,
-      updatedAt: nowIso,
-      lastCheckedAt: nowIso,
-    };
+      const rejected = await this.loadRejectedFingerprints();
+      if (!options.allowPreviouslyRejected && Object.hasOwn(rejected, fingerprint)) {
+        return { outcome: "previously-rejected", fingerprint };
+      }
 
-    await this.writeProposal(proposal);
-    return { outcome: "created", proposal, fingerprint };
+      let targetBaseDigest = input.targetBaseDigest;
+      if (!targetBaseDigest && options.targetSourceRoot) {
+        try {
+          const targetFile = await assertNoSymlinkBelow(options.targetSourceRoot, targetPath);
+          const content = await readFile(targetFile, "utf8");
+          targetBaseDigest = assetDigest(content);
+        } catch {
+          // 目标文件尚未在本地检出时留空，审阅预览阶段会重新核验
+        }
+      }
+
+      const nowIso = new Date().toISOString();
+      let id = input.id && PROPOSAL_ID_PATTERN.test(input.id) ? input.id : generateProposalId(input.channel, title);
+      // 防止外部导入 JSON 伪造或碰撞已有提案 ID 静默覆盖已审阅/已写入记录。
+      if (await pathExists(this.proposalPath(id))) {
+        id = generateProposalId(input.channel, title);
+      }
+      const proposal: EvolutionProposal = {
+        schemaVersion: 1,
+        id,
+        channel: input.channel,
+        targetKind: input.targetKind,
+        operation: input.operation,
+        status: "pending",
+        title,
+        ...(input.summary?.trim() ? { summary: input.summary.trim() } : {}),
+        ...(input.targetRulepack?.trim() ? { targetRulepack: input.targetRulepack.trim() } : {}),
+        targetPath,
+        anchorHeading,
+        ...(input.beforeSnippet !== undefined ? { beforeSnippet: normalizeNewlines(input.beforeSnippet) } : {}),
+        ...(input.afterSnippet !== undefined ? { afterSnippet: normalizeNewlines(input.afterSnippet) } : {}),
+        evidence: input.evidence.map((ev) => ({
+          sourceLabel: ev.sourceLabel.trim(),
+          summary: ev.summary.trim(),
+          ...(ev.url ? { url: assertSafeWatchUrl(ev.url) } : {}),
+          ...(ev.verifiedAt ? { verifiedAt: ev.verifiedAt } : {}),
+          ...(ev.projectNames?.length ? { projectNames: [...ev.projectNames] } : {}),
+        })),
+        fingerprint,
+        ...(targetBaseDigest ? { targetBaseDigest } : {}),
+        createdAt: input.createdAt ?? nowIso,
+        updatedAt: nowIso,
+        lastCheckedAt: nowIso,
+      };
+
+      await this.writeProposal(proposal);
+      return { outcome: "created", proposal, fingerprint };
+    });
   }
 
   async importProposalFile(
@@ -1714,62 +1831,99 @@ export class EvolutionStore {
   async recheck(
     proposalId: string,
     targetSource: EvolutionTargetSource,
+    editedPatch?: EvolutionPatchEdit,
   ): Promise<{ proposal: EvolutionProposal; patch: AtomicPatchResult | undefined; conflicts: string[] }> {
-    const proposal = await this.readProposal(proposalId);
-    if (proposal.status === "approved" || proposal.status === "rejected" || proposal.status === "archived") {
-      throw new Error("已处理的提案无需重新检测");
-    }
-    const nowIso = new Date().toISOString();
-    if (!targetSource.root) {
-      const conflicts = [`[SOURCE_UNAVAILABLE] 目标源「${targetSource.name}」尚未在本地检出，无法核验目标文件`];
-      const next: EvolutionProposal = {
-        ...proposal,
-        status: "conflict",
-        conflictMessages: conflicts,
-        lastCheckedAt: nowIso,
-        updatedAt: nowIso,
-      };
-      await this.writeProposal(next);
-      return { proposal: next, patch: undefined, conflicts };
-    }
-
-    let targetFilePath: string;
-    let currentContent: string;
-    try {
-      targetFilePath = await assertNoSymlinkBelow(targetSource.root, proposal.targetPath);
-      const stat = await lstat(targetFilePath);
-      if (!stat.isFile() || stat.isSymbolicLink()) {
-        throw new Error("目标路径不是普通文件");
+    return this.withExclusiveLock(async () => {
+      const proposal = await this.readProposal(proposalId);
+      if (proposal.status === "approved" || proposal.status === "rejected" || proposal.status === "archived") {
+        throw new Error("已处理的提案无需重新检测");
       }
-      currentContent = await readFile(targetFilePath, "utf8");
-    } catch (error) {
-      const conflicts = [
-        `[TARGET_NOT_FOUND] 在目标源中未找到文件 ${proposal.targetPath}（${error instanceof Error ? error.message : String(error)}）`,
-      ];
+
+      let workingProposal = proposal;
+      if (editedPatch) {
+        const nextAnchor = (editedPatch.anchorHeading ?? proposal.anchorHeading).trim();
+        if (!nextAnchor || nextAnchor.length > 200) throw new Error("必须指定有效的锚点章节标题");
+        const nextBefore =
+          editedPatch.beforeSnippet !== undefined ? normalizeNewlines(editedPatch.beforeSnippet) : proposal.beforeSnippet;
+        const nextAfter =
+          editedPatch.afterSnippet !== undefined ? normalizeNewlines(editedPatch.afterSnippet) : proposal.afterSnippet;
+        const sensitiveFindings = detectSensitiveContent({
+          anchorHeading: nextAnchor,
+          beforeSnippet: nextBefore,
+          afterSnippet: nextAfter,
+        });
+        if (sensitiveFindings.length > 0) {
+          throw new Error(`编辑后的补丁包含敏感内容：${sensitiveFindings.join("；")}`);
+        }
+        workingProposal = {
+          ...proposal,
+          anchorHeading: nextAnchor,
+          ...(nextBefore !== undefined ? { beforeSnippet: nextBefore } : {}),
+          ...(nextAfter !== undefined ? { afterSnippet: nextAfter } : {}),
+          fingerprint: computeProposalFingerprint({
+            channel: proposal.channel,
+            targetKind: proposal.targetKind,
+            operation: proposal.operation,
+            targetPath: proposal.targetPath,
+            anchorHeading: nextAnchor,
+            beforeSnippet: nextBefore,
+            afterSnippet: nextAfter,
+          }),
+        };
+      }
+
+      const nowIso = new Date().toISOString();
+      if (!targetSource.root) {
+        const conflicts = [`[SOURCE_UNAVAILABLE] 目标源「${targetSource.name}」尚未在本地检出，无法核验目标文件`];
+        const next: EvolutionProposal = {
+          ...workingProposal,
+          status: "conflict",
+          conflictMessages: conflicts,
+          lastCheckedAt: nowIso,
+          updatedAt: nowIso,
+        };
+        await this.writeProposal(next);
+        return { proposal: next, patch: undefined, conflicts };
+      }
+
+      let targetFilePath: string;
+      let currentContent: string;
+      try {
+        targetFilePath = await assertNoSymlinkBelow(targetSource.root, workingProposal.targetPath);
+        const stat = await lstat(targetFilePath);
+        if (!stat.isFile() || stat.isSymbolicLink()) {
+          throw new Error("目标路径不是普通文件");
+        }
+        currentContent = await readFile(targetFilePath, "utf8");
+      } catch (error) {
+        const conflicts = [
+          `[TARGET_NOT_FOUND] 在目标源中未找到文件 ${workingProposal.targetPath}（${error instanceof Error ? error.message : String(error)}）`,
+        ];
+        const next: EvolutionProposal = {
+          ...workingProposal,
+          status: "conflict",
+          conflictMessages: conflicts,
+          lastCheckedAt: nowIso,
+          updatedAt: nowIso,
+        };
+        await this.writeProposal(next);
+        return { proposal: next, patch: undefined, conflicts };
+      }
+
+      // 重新检测时不校验旧的 targetBaseDigest，而是以最新文件为准核验锚点与片段是否可无冲突应用
+      const patch = computeAtomicDeltaPatch(currentContent, workingProposal, undefined);
       const next: EvolutionProposal = {
-        ...proposal,
-        status: "conflict",
-        conflictMessages: conflicts,
+        ...workingProposal,
+        status: patch.conflicts.length === 0 ? "pending" : "conflict",
+        targetBaseDigest: patch.beforeDigest,
         lastCheckedAt: nowIso,
         updatedAt: nowIso,
+        ...(patch.conflicts.length > 0 ? { conflictMessages: patch.conflicts } : { conflictMessages: undefined }),
       };
+      if (!next.conflictMessages) delete next.conflictMessages;
       await this.writeProposal(next);
-      return { proposal: next, patch: undefined, conflicts };
-    }
-
-    // 重新检测时不校验旧的 targetBaseDigest，而是以最新文件为准核验锚点与片段是否可无冲突应用
-    const patch = computeAtomicDeltaPatch(currentContent, proposal, undefined);
-    const next: EvolutionProposal = {
-      ...proposal,
-      status: patch.conflicts.length === 0 ? "pending" : "conflict",
-      targetBaseDigest: patch.beforeDigest,
-      lastCheckedAt: nowIso,
-      updatedAt: nowIso,
-      ...(patch.conflicts.length > 0 ? { conflictMessages: patch.conflicts } : { conflictMessages: undefined }),
-    };
-    if (!next.conflictMessages) delete next.conflictMessages;
-    await this.writeProposal(next);
-    return { proposal: next, patch, conflicts: patch.conflicts };
+      return { proposal: next, patch, conflicts: patch.conflicts };
+    });
   }
 
   /**
@@ -1811,6 +1965,11 @@ export class EvolutionStore {
     if (proposal.status === "stale") {
       conflicts.push(
         `[PROPOSAL_STALE] 该提案已超过 ${EVOLUTION_STALE_DAYS} 天未审阅，请先点击「重新检测」核验最新基线指纹`,
+      );
+    }
+    if (proposal.status === "conflict") {
+      conflicts.push(
+        "[PROPOSAL_CONFLICT] 该提案处于冲突态，请先点击「重新检测」保存并核验修订后的锚点与补丁内容",
       );
     }
 
@@ -1902,6 +2061,7 @@ export class EvolutionStore {
           : ["Markdown 相对链接完整性校验", "规则包清单（pack.json）与正文一致性校验", "写入前指纹一致性复核"],
     };
 
+    this.pendingPreviews.clear();
     this.pendingPreviews.set(token, {
       preview,
       proposalUpdatedAt: proposal.updatedAt,
@@ -2014,39 +2174,107 @@ export class EvolutionStore {
   }
 
   async reject(proposalId: string, reason?: string): Promise<EvolutionProposal> {
-    const proposal = await this.readProposal(proposalId);
-    if (proposal.status === "approved") {
-      throw new Error("已写入的提案不能驳回");
-    }
-    const nowIso = new Date().toISOString();
-    const cleanedReason = reason?.trim().slice(0, 300);
-    const updated: EvolutionProposal = {
-      ...proposal,
-      status: "rejected",
-      updatedAt: nowIso,
-      ...(cleanedReason ? { rejectionReason: cleanedReason } : {}),
-    };
-    await this.writeProposal(updated);
+    return this.withExclusiveLock(async () => {
+      const proposal = await this.readProposal(proposalId);
+      if (proposal.status === "approved") {
+        throw new Error("已写入的提案不能驳回");
+      }
+      const nowIso = new Date().toISOString();
+      const cleanedReason = reason?.trim().slice(0, 300);
+      const updated: EvolutionProposal = {
+        ...proposal,
+        status: "rejected",
+        updatedAt: nowIso,
+        ...(cleanedReason ? { rejectionReason: cleanedReason } : {}),
+      };
+      await this.writeProposal(updated);
 
-    const rejected = await this.loadRejectedFingerprints();
-    rejected[proposal.fingerprint] = {
-      rejectedAt: nowIso,
-      ...(cleanedReason ? { reason: cleanedReason } : {}),
-    };
-    await this.saveRejectedFingerprints(rejected);
-    return updated;
+      const rejected = await this.loadRejectedFingerprints();
+      rejected[proposal.fingerprint] = {
+        rejectedAt: nowIso,
+        ...(cleanedReason ? { reason: cleanedReason } : {}),
+      };
+      await this.saveRejectedFingerprints(rejected);
+      return updated;
+    });
   }
 
-  /** 导出标准增量补丁文件，拒绝静默覆盖已有文件。 */
+  /** 将已驳回或已归档的提案重新放回待审收件箱，并移除其驳回指纹拦截记录。 */
+  async reopen(proposalId: string): Promise<EvolutionProposal> {
+    return this.withExclusiveLock(async () => {
+      const proposal = await this.readProposal(proposalId);
+      if (proposal.status !== "rejected" && proposal.status !== "archived") {
+        throw new Error("仅支持重新打开已驳回或已归档的提案");
+      }
+      const nowIso = new Date().toISOString();
+      const updated: EvolutionProposal = {
+        ...proposal,
+        status: "pending",
+        updatedAt: nowIso,
+        lastCheckedAt: nowIso,
+      };
+      delete updated.rejectionReason;
+      delete updated.conflictMessages;
+      await this.writeProposal(updated);
+
+      const rejected = await this.loadRejectedFingerprints();
+      if (Object.hasOwn(rejected, proposal.fingerprint)) {
+        delete rejected[proposal.fingerprint];
+        await this.saveRejectedFingerprints(rejected);
+      }
+      return updated;
+    });
+  }
+
+  /** 将已处理或暂不处理的提案归档，保持主收件箱清爽。 */
+  async archive(proposalId: string): Promise<EvolutionProposal> {
+    return this.withExclusiveLock(async () => {
+      const proposal = await this.readProposal(proposalId);
+      if (proposal.status === "archived") return proposal;
+      const nowIso = new Date().toISOString();
+      const updated: EvolutionProposal = {
+        ...proposal,
+        status: "archived",
+        updatedAt: nowIso,
+      };
+      await this.writeProposal(updated);
+      return updated;
+    });
+  }
+
+  /** 导出标准增量补丁文件，拒绝静默覆盖已有文件；支持合并抽屉中尚未落盘的编辑草稿。 */
   async exportPatch(
     proposalId: string,
     destinationPath: string,
     targetSourceRoot?: string,
+    editedPatch?: EvolutionPatchEdit,
   ): Promise<{ path: string; sha256: string }> {
     if (!path.isAbsolute(destinationPath)) {
       throw new Error("补丁导出路径必须是绝对路径");
     }
-    const proposal = await this.readProposal(proposalId);
+    const baseProposal = await this.readProposal(proposalId);
+    let proposal = baseProposal;
+    if (editedPatch) {
+      const nextAnchor = (editedPatch.anchorHeading ?? baseProposal.anchorHeading).trim();
+      const nextBefore =
+        editedPatch.beforeSnippet !== undefined ? normalizeNewlines(editedPatch.beforeSnippet) : baseProposal.beforeSnippet;
+      const nextAfter =
+        editedPatch.afterSnippet !== undefined ? normalizeNewlines(editedPatch.afterSnippet) : baseProposal.afterSnippet;
+      const sensitiveFindings = detectSensitiveContent({
+        anchorHeading: nextAnchor,
+        beforeSnippet: nextBefore,
+        afterSnippet: nextAfter,
+      });
+      if (sensitiveFindings.length > 0) {
+        throw new Error(`编辑后的补丁包含敏感内容：${sensitiveFindings.join("；")}`);
+      }
+      proposal = {
+        ...baseProposal,
+        anchorHeading: nextAnchor,
+        ...(nextBefore !== undefined ? { beforeSnippet: nextBefore } : {}),
+        ...(nextAfter !== undefined ? { afterSnippet: nextAfter } : {}),
+      };
+    }
     await assertAssetDirectory(path.dirname(destinationPath));
     await mkdir(path.dirname(destinationPath), { recursive: true });
 

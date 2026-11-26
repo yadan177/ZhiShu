@@ -81,7 +81,7 @@ export function assertAssetManifest(value: unknown): asserts value is AssetManif
   ].includes(key)) ||
     manifest.schemaVersion !== 1 || typeof manifest.id !== "string" || !ID.test(manifest.id) ||
     (manifest.kind !== "skill" && manifest.kind !== "capability-plugin") ||
-    typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(manifest.version) ||
+    typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(manifest.version) ||
     typeof manifest.title !== "string" || !manifest.title.trim() ||
     !isIdList(manifest.supportedIdes, true) || !isIdList(manifest.dependencies) ||
     !isIdList(manifest.requiredTools) || !isIdList(manifest.ruleCategories) ||

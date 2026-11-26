@@ -114,10 +114,65 @@ function assertUserAssetReceipt(value: unknown, ideId: string, id: string): asse
   }
 }
 
+const STALE_LOCK_MS = 10 * 60 * 1000;
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function acquireOperationLock(lockDir: string, busyMessage: string): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await mkdir(lockDir);
+      await writeFile(
+        path.join(lockDir, "lock.json"),
+        JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+        { mode: 0o600 },
+      );
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        if (attempt === 0) {
+          let stale = false;
+          try {
+            const raw = await readFile(path.join(lockDir, "lock.json"), "utf8");
+            const parsed: unknown = JSON.parse(raw);
+            if (isRecord(parsed) && typeof parsed.pid === "number" && !isPidAlive(parsed.pid)) {
+              stale = true;
+            }
+          } catch {
+            try {
+              const info = await lstat(lockDir);
+              if (Date.now() - info.mtimeMs > STALE_LOCK_MS) stale = true;
+            } catch {
+              stale = false;
+            }
+          }
+          if (stale) {
+            await rm(lockDir, { recursive: true, force: true });
+            continue;
+          }
+        }
+        throw new Error(busyMessage);
+      }
+      throw error;
+    }
+  }
+}
+
 /** 供各 IDE 适配器复用的用户环境资产文件事务存储；绝不读写业务项目目录。 */
 export class UserAssetStore {
   private pending = new Map<string, Pending>();
   constructor(private readonly stateRoot: string, private readonly roots: Record<string, string[]>) {}
+  clearPending(): void {
+    this.pending.clear();
+  }
   private destination(ideId: string, destination: string): void {
     if (!this.roots[ideId]?.some((root) => path.isAbsolute(destination) && path.resolve(destination) === destination && destination.startsWith(`${path.resolve(root)}${path.sep}`))) throw new Error("安装目录不属于所选软件的用户环境");
   }
@@ -167,7 +222,7 @@ export class UserAssetStore {
     await assertAssetDirectory(this.stateRoot);
     await mkdir(this.stateRoot, { recursive: true });
     const lock = path.join(this.stateRoot, ".operation-lock");
-    try { await mkdir(lock); } catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("另一个资产操作或中断操作尚未结束"); throw error; }
+    await acquireOperationLock(lock, "另一个资产操作或中断操作尚未结束");
     try {
       const record = this.record(receipt.target.ideId, receipt.id);
       if (await present(record)) throw new Error("此内容已有安装记录，拒绝覆盖");
@@ -177,7 +232,28 @@ export class UserAssetStore {
       await rm(lock, { recursive: true, force: true });
     }
   }
-  async preview(action: UserAssetPreview["action"], ideId: string, delivery: UserAssetDelivery): Promise<UserAssetPreview> {
+  /** 显式移除智枢本地安装回执（不修改目标目录文件），用于目标目录已被手动删改或宿主卸载后的记录解绑。 */
+  async forgetReceipt(ideId: string, id: string): Promise<void> {
+    await assertAssetDirectory(this.stateRoot);
+    await mkdir(this.stateRoot, { recursive: true });
+    const lock = path.join(this.stateRoot, ".operation-lock");
+    await acquireOperationLock(lock, "另一个资产操作或中断操作尚未结束");
+    try {
+      const record = this.record(ideId, id);
+      if (!(await present(record))) throw new Error("智枢没有此内容的安装记录");
+      await rm(record, { force: true });
+      this.pending.clear();
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+    }
+  }
+  async preview(
+    action: UserAssetPreview["action"],
+    ideId: string,
+    delivery: UserAssetDelivery,
+    options: { allowConflictOverride?: boolean } = {},
+  ): Promise<UserAssetPreview> {
+    const allowConflictOverride = options.allowConflictOverride === true;
     assertAssetManifest(delivery.manifest);
     if (!delivery.manifest.supportedIdes.includes(ideId)) throw new Error("内容不支持所选软件");
     this.destination(ideId, delivery.destination);
@@ -188,11 +264,22 @@ export class UserAssetStore {
     if (action !== "install" && !existingReceipt) throw new Error("智枢没有此内容的安装记录");
     if (existingReceipt && (existingReceipt.destination !== delivery.destination || existingReceipt.kind !== delivery.manifest.kind)) throw new Error("安装目标或类型发生变化");
     const before = await readAssetFiles(delivery.destination);
-    const conflicts = existingReceipt ? await this.validate(existingReceipt) : await present(delivery.destination) ? ["目标目录已有未知内容，拒绝覆盖"] : [];
+    const conflicts = allowConflictOverride
+      ? []
+      : existingReceipt
+        ? await this.validate(existingReceipt)
+        : await present(delivery.destination)
+          ? ["目标目录已有未知内容，拒绝覆盖"]
+          : [];
     const retainedPaths = existingReceipt ? [...before.keys()].filter((file) => !Object.hasOwn(existingReceipt.managedFiles, file)) : [];
     for (const file of retainedPaths) {
-      if (action !== "uninstall" && [...delivery.files.keys()].some((next) => next === file || next.startsWith(`${file}/`) || file.startsWith(`${next}/`))) conflicts.push(`新增文件与未知内容冲突：${file}`);
+      if (action !== "uninstall" && !allowConflictOverride && [...delivery.files.keys()].some((next) => next === file || next.startsWith(`${file}/`) || file.startsWith(`${next}/`))) {
+        conflicts.push(`新增文件与未知内容冲突：${file}`);
+      }
     }
+    const effectiveRetained = allowConflictOverride
+      ? retainedPaths.filter((file) => action === "uninstall" || ![...delivery.files.keys()].some((next) => next === file || next.startsWith(`${file}/`) || file.startsWith(`${next}/`)))
+      : retainedPaths;
     const desired = action === "uninstall" ? new Map<string, Buffer>() : delivery.files;
     const changes: UserAssetPreview["changes"] = [];
     const managedBefore = new Set(Object.keys(existingReceipt?.managedFiles ?? {}));
@@ -203,7 +290,7 @@ export class UserAssetStore {
       changes.push({ path: file, action: next === undefined ? "remove" : old === undefined ? "add" : "modify", before: display(old), after: display(next) });
     }
     const preview = { token: randomUUID(), action, ideId, title: delivery.manifest.title, version: delivery.manifest.version,
-      destination: delivery.destination, changes, retainedPaths, conflicts };
+      destination: delivery.destination, changes, retainedPaths: effectiveRetained, conflicts };
     this.pending.clear();
     this.pending.set(preview.token, { preview, delivery, previous: existingReceipt, receiptText: record.text, before });
     return preview;
@@ -214,7 +301,7 @@ export class UserAssetStore {
     if (pending.preview.conflicts.length) throw new Error("存在冲突，不能应用");
     await assertAssetDirectory(this.stateRoot); await mkdir(this.stateRoot, { recursive: true });
     const lock = path.join(this.stateRoot, ".operation-lock");
-    try { await mkdir(lock); } catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("另一个资产操作或中断操作尚未结束"); throw error; }
+    await acquireOperationLock(lock, "另一个资产操作或中断操作尚未结束");
     const { delivery, previous, before, preview } = pending;
     const record = this.record(preview.ideId, delivery.manifest.id);
     const staging = `${delivery.destination}.zhishu-${randomUUID()}`;
@@ -222,7 +309,10 @@ export class UserAssetStore {
     let swapped = false, hadDestination = false, movedOld = false, effectStarted = false, committed = false;
     try {
       const current = await this.receipt(preview.ideId, delivery.manifest.id);
-      if (current.text !== pending.receiptText || fingerprint(await readAssetFiles(delivery.destination)) !== fingerprint(before)) throw new Error("安装内容在预览后发生变化，请重新预览");
+      if (current.text !== pending.receiptText || fingerprint(await readAssetFiles(delivery.destination)) !== fingerprint(before)) {
+        this.pending.delete(token);
+        throw new Error("安装内容在预览后发生变化，请重新预览");
+      }
       const nextFiles = new Map<string, Buffer>();
       for (const file of preview.retainedPaths) {
         const existingData = before.get(file);

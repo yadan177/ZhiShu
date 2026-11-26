@@ -11,7 +11,7 @@ import {
   verifyInstallerBeforeLaunch,
 } from "./desktop-updater.ts";
 
-const { autoUpdater } = electronUpdater;
+const { autoUpdater, CancellationToken } = electronUpdater;
 
 export type SoftwareInstallMode = "auto-replace" | "open-installer" | "electron-updater";
 
@@ -59,6 +59,7 @@ export class SoftwareUpdateService {
   private macAppPath?: string;
   private downloaded?: DownloadedRecord;
   private downloadAbort?: AbortController;
+  private updaterCancelToken?: InstanceType<typeof CancellationToken>;
   private pendingCheck?: Promise<SoftwareUpdateState>;
 
   constructor(
@@ -134,10 +135,10 @@ export class SoftwareUpdateService {
         return this.setState({ phase: "current", currentVersion: app.getVersion(), message: "开发模式不检查软件更新" });
       }
       const release = await fetchDesktopRelease(process.platform, process.arch, this.fetcher);
-      this.release = release;
       if (!release || compareDesktopVersions(release.version, app.getVersion()) <= 0) {
         return this.setState({ phase: "current", currentVersion: app.getVersion() });
       }
+      this.release = release;
 
       // 1. 若 Windows 具备完整官方代码签名与 latest.yml，沿用 electron-updater 原生静默更新。
       if (process.platform === "win32" && release.feedUrl && canInstallAutomatically()) {
@@ -195,7 +196,7 @@ export class SoftwareUpdateService {
       return this.setState({
         phase: "error",
         currentVersion: app.getVersion(),
-        availableVersion: this.release?.version,
+        availableVersion: this.installMode ? this.release?.version : undefined,
         installMode: this.installMode,
         message: error instanceof Error ? error.message : "检查软件版本失败",
       });
@@ -213,6 +214,8 @@ export class SoftwareUpdateService {
     const mode = this.installMode;
 
     if (mode === "electron-updater") {
+      const cancelToken = new CancellationToken();
+      this.updaterCancelToken = cancelToken;
       this.setState({
         phase: "downloading",
         currentVersion: app.getVersion(),
@@ -221,7 +224,16 @@ export class SoftwareUpdateService {
         percent: 0,
       });
       try {
-        await autoUpdater.downloadUpdate();
+        await autoUpdater.downloadUpdate(cancelToken);
+        if (cancelToken.cancelled) {
+          return this.setState({
+            phase: "available",
+            currentVersion: app.getVersion(),
+            availableVersion: release.version,
+            installMode: mode,
+            message: "已取消下载",
+          });
+        }
         return this.setState({
           phase: "ready",
           currentVersion: app.getVersion(),
@@ -230,6 +242,15 @@ export class SoftwareUpdateService {
           percent: 100,
         });
       } catch (error) {
+        if (cancelToken.cancelled) {
+          return this.setState({
+            phase: "available",
+            currentVersion: app.getVersion(),
+            availableVersion: release.version,
+            installMode: mode,
+            message: "已取消下载",
+          });
+        }
         return this.setState({
           phase: "error",
           currentVersion: app.getVersion(),
@@ -237,6 +258,8 @@ export class SoftwareUpdateService {
           installMode: mode,
           message: error instanceof Error ? error.message : "下载软件更新失败",
         });
+      } finally {
+        if (this.updaterCancelToken === cancelToken) this.updaterCancelToken = undefined;
       }
     }
 
@@ -271,6 +294,15 @@ export class SoftwareUpdateService {
           });
         },
       });
+      if (controller.signal.aborted) {
+        return this.setState({
+          phase: "available",
+          currentVersion: app.getVersion(),
+          availableVersion: release.version,
+          installMode: mode,
+          message: "已取消下载",
+        });
+      }
       this.downloaded = {
         version: release.version,
         filePath: result.filePath,
@@ -312,12 +344,20 @@ export class SoftwareUpdateService {
     if (this.downloadAbort) {
       this.downloadAbort.abort();
     }
+    if (this.updaterCancelToken) {
+      this.updaterCancelToken.cancel();
+    }
     return this.getState();
   }
 
   async install(): Promise<SoftwareUpdateState> {
     if (this.state.phase !== "ready") throw new Error("软件更新尚未下载完成");
     if (this.installMode === "electron-updater") {
+      this.setState({
+        ...this.state,
+        phase: "installing",
+        message: "正在安装更新并重启…",
+      });
       autoUpdater.quitAndInstall(true, true);
       return this.getState();
     }
@@ -341,12 +381,19 @@ export class SoftwareUpdateService {
             expectedSha256: downloaded.sha256,
             targetAppPath: downloaded.macAppPath,
             currentPid: process.pid,
+            skipVerify: true,
           });
-          const child = spawn(helper.command, helper.args, {
-            detached: true,
-            stdio: "ignore",
+          await new Promise<void>((resolve, reject) => {
+            const child = spawn(helper.command, helper.args, {
+              detached: true,
+              stdio: "ignore",
+            });
+            child.once("error", (err) => reject(new Error(`无法启动更新替换脚本：${err.message}`)));
+            child.once("spawn", () => {
+              child.unref();
+              resolve();
+            });
           });
-          child.unref();
           setTimeout(() => app.quit(), 120);
           return this.setState({
             ...this.state,
@@ -367,12 +414,9 @@ export class SoftwareUpdateService {
       }
 
       if (process.platform === "win32") {
-        const child = spawn(downloaded.filePath, [], {
-          detached: true,
-          stdio: "ignore",
-          windowsHide: false,
-        });
-        child.unref();
+        // 使用 shell.openPath（ShellExecute）以原生支持安装至 Program Files 时的 UAC 提权弹窗。
+        const openError = await shell.openPath(downloaded.filePath);
+        if (openError) throw new Error(`无法启动安装向导：${openError}`);
         setTimeout(() => app.quit(), 150);
         return this.setState({
           ...this.state,

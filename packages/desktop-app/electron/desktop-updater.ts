@@ -3,6 +3,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { access, chmod, constants, lstat, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DesktopRelease } from "./desktop-releases.ts";
+import { formatGitHubNetworkError } from "./resilient-fetch.ts";
 
 const TRUSTED_RELEASE_PATH_PREFIX = "/yadan177/ZhiShu/releases/download/";
 const TRUSTED_REDIRECT_HOSTS = new Set([
@@ -14,7 +15,44 @@ const TRUSTED_REDIRECT_HOSTS = new Set([
 const MAX_REDIRECTS = 5;
 const MAX_CHECKSUM_BYTES = 64 * 1024;
 const DEFAULT_MAX_INSTALLER_BYTES = 512 * 1024 * 1024;
+const CONNECT_TIMEOUT_MS = 25_000;
+const STREAM_IDLE_TIMEOUT_MS = 45_000;
 const HEX_64 = /^[a-f0-9]{64}$/i;
+
+function combineSignalWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+async function readChunkWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleMs: number,
+  signal?: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new Error("已取消软件更新下载"));
+          return;
+        }
+        onAbort = () => reject(new Error("已取消软件更新下载"));
+        signal?.addEventListener("abort", onAbort, { once: true });
+        timer = setTimeout(() => {
+          const err = new Error("下载长时间无响应（超时），请检查网络后重试");
+          err.name = "TimeoutError";
+          reject(err);
+        }, idleMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+  }
+}
 
 export interface DownloadedInstaller {
   filePath: string;
@@ -79,7 +117,7 @@ async function fetchTrusted(
     const response = await fetcher(currentUrl, {
       redirect: "manual",
       headers: { "User-Agent": "ZhiShu-Desktop" },
-      signal: options.signal,
+      signal: combineSignalWithTimeout(options.signal, CONNECT_TIMEOUT_MS),
     });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -219,20 +257,35 @@ export async function downloadVerifiedInstaller(options: {
     }
   };
 
-  try {
-    const out = createWriteStream(partPath, { flags: "wx", mode: 0o600 });
-    const streamFinished = new Promise<void>((resolve, reject) => {
-      out.once("finish", resolve);
-      out.once("error", reject);
+  const out = createWriteStream(partPath, { flags: "wx", mode: 0o600 });
+  const streamFinished = new Promise<void>((resolve, reject) => {
+    out.once("finish", resolve);
+    out.once("error", reject);
+  });
+  // 防止异常路径未 await streamFinished 时产生未捕获 Rejection。
+  streamFinished.catch(() => {});
+  const closeWriteStream = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (out.closed || out.destroyed) {
+        resolve();
+        return;
+      }
+      out.once("close", resolve);
+      out.destroy();
     });
 
+  try {
     if (response.body) {
       const reader = response.body.getReader();
+      let readerActive = true;
       try {
         for (;;) {
           if (signal?.aborted) throw new Error("已取消软件更新下载");
-          const { done, value } = await reader.read();
-          if (done) break;
+          const { done, value } = await readChunkWithIdleTimeout(reader, STREAM_IDLE_TIMEOUT_MS, signal);
+          if (done) {
+            readerActive = false;
+            break;
+          }
           if (!value || value.byteLength === 0) continue;
           receivedBytes += value.byteLength;
           if (receivedBytes > maxBytes) {
@@ -241,8 +294,17 @@ export async function downloadVerifiedInstaller(options: {
           hash.update(value);
           if (!out.write(value)) {
             await new Promise<void>((resolve, reject) => {
-              out.once("drain", resolve);
-              out.once("error", reject);
+              const cleanupDrain = () => {
+                out.off("drain", onDrain);
+                out.off("error", onErr);
+                signal?.removeEventListener("abort", onAbort);
+              };
+              const onDrain = () => { cleanupDrain(); resolve(); };
+              const onErr = (err: Error) => { cleanupDrain(); reject(err); };
+              const onAbort = () => { cleanupDrain(); reject(new Error("已取消软件更新下载")); };
+              out.once("drain", onDrain);
+              out.once("error", onErr);
+              signal?.addEventListener("abort", onAbort, { once: true });
             });
           }
           if (totalBytes > 0) {
@@ -250,6 +312,9 @@ export async function downloadVerifiedInstaller(options: {
           }
         }
       } finally {
+        if (readerActive) {
+          await reader.cancel().catch(() => {});
+        }
         reader.releaseLock();
       }
     } else {
@@ -262,6 +327,7 @@ export async function downloadVerifiedInstaller(options: {
       out.write(buf);
     }
 
+    if (signal?.aborted) throw new Error("已取消软件更新下载");
     out.end();
     await streamFinished;
 
@@ -273,11 +339,14 @@ export async function downloadVerifiedInstaller(options: {
 
     await rename(partPath, targetPath);
 
-    // 清理旧版本的缓存安装包，避免缓存目录持续增长。
+    // 清理旧版本的缓存安装包、残留 .part 与过期辅助脚本，避免缓存目录持续增长。
     try {
       for (const entry of await readdir(cacheDir)) {
         if (entry === release.installerName) continue;
-        if (entry.startsWith("ZhiShu-Desktop-") && (entry.endsWith(".dmg") || entry.endsWith(".exe"))) {
+        if (
+          (entry.startsWith("ZhiShu-Desktop-") && (entry.endsWith(".dmg") || entry.endsWith(".exe") || entry.endsWith(".part"))) ||
+          (entry.startsWith("apply-mac-update-") && entry.endsWith(".sh"))
+        ) {
           await rm(path.join(cacheDir, entry), { force: true });
         }
       }
@@ -288,8 +357,10 @@ export async function downloadVerifiedInstaller(options: {
     onProgress?.(100);
     return { filePath: targetPath, sha256: actualSha256, size: receivedBytes, cached: false };
   } catch (error) {
-    await rm(partPath, { force: true });
-    throw error;
+    await closeWriteStream();
+    await rm(partPath, { force: true }).catch(() => {});
+    if (signal?.aborted) throw new Error("已取消软件更新下载");
+    throw formatGitHubNetworkError(error);
   }
 }
 
@@ -338,8 +409,20 @@ export function buildMacReplaceScript(): string {
     'MNT=""',
     'STAGING=""',
     'BACKUP=""',
+    "detach_mnt() {",
+    '  if [ -n "$MNT" ]; then',
+    '    hdiutil detach "$MNT" -quiet >/dev/null 2>&1 || hdiutil detach "$MNT" -force -quiet >/dev/null 2>&1 || true',
+    '    rmdir "$MNT" >/dev/null 2>&1 || true',
+    '    MNT=""',
+    "  fi",
+    "}",
+    "fallback_open_dmg() {",
+    "  detach_mnt",
+    '  open "$DMG" >/dev/null 2>&1 || true',
+    "  exit 1",
+    "}",
     "cleanup() {",
-    '  if [ -n "$MNT" ]; then hdiutil detach "$MNT" -quiet >/dev/null 2>&1 || true; rmdir "$MNT" >/dev/null 2>&1 || true; fi',
+    "  detach_mnt",
     '  if [ -n "$STAGING" ] && [ -e "$STAGING" ]; then rm -rf "$STAGING" >/dev/null 2>&1 || true; fi',
     '  rm -f "$SELF" >/dev/null 2>&1 || true',
     "}",
@@ -347,36 +430,32 @@ export function buildMacReplaceScript(): string {
     "i=0",
     'while kill -0 "$PID" 2>/dev/null; do',
     "  i=$((i + 1))",
-    '  if [ "$i" -ge 80 ]; then break; fi',
+    '  if [ "$i" -ge 80 ]; then exit 1; fi',
     "  sleep 0.25",
     "done",
     'MNT="$(mktemp -d /tmp/zhishu-update-mnt.XXXXXX)"',
-    'if ! hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null 2>&1; then',
-    '  open "$DMG" >/dev/null 2>&1 || true',
-    "  exit 1",
+    'if ! hdiutil attach "$DMG" -nobrowse -noautoopen -readonly -mountpoint "$MNT" >/dev/null 2>&1; then',
+    "  fallback_open_dmg",
     "fi",
     'SRC_APP="$MNT/智枢.app"',
     'if [ ! -d "$SRC_APP" ] || [ -L "$SRC_APP" ]; then',
-    '  open "$DMG" >/dev/null 2>&1 || true',
-    "  exit 1",
+    "  fallback_open_dmg",
     "fi",
     'STAGING="${TARGET_APP}.zhishu-next.$$"',
     'BACKUP="${TARGET_APP}.zhishu-prev.$$"',
     'if ! ditto "$SRC_APP" "$STAGING"; then',
-    '  open "$DMG" >/dev/null 2>&1 || true',
-    "  exit 1",
+    "  fallback_open_dmg",
     "fi",
     'if ! mv "$TARGET_APP" "$BACKUP"; then',
-    '  open "$DMG" >/dev/null 2>&1 || true',
-    "  exit 1",
+    "  fallback_open_dmg",
     "fi",
     'if ! mv "$STAGING" "$TARGET_APP"; then',
     '  mv "$BACKUP" "$TARGET_APP" >/dev/null 2>&1 || true',
-    '  open "$DMG" >/dev/null 2>&1 || true',
-    "  exit 1",
+    "  fallback_open_dmg",
     "fi",
     'rm -rf "$BACKUP" >/dev/null 2>&1 || true',
-    'open "$TARGET_APP" >/dev/null 2>&1 || true',
+    "detach_mnt",
+    'open -n "$TARGET_APP" >/dev/null 2>&1 || open "$TARGET_APP" >/dev/null 2>&1 || true',
     "",
   ].join("\n");
 }
@@ -387,9 +466,12 @@ export async function prepareMacReplaceHelper(options: {
   expectedSha256: string;
   targetAppPath: string;
   currentPid: number;
+  skipVerify?: boolean;
 }): Promise<{ command: string; args: string[]; scriptPath: string }> {
   await assertSafeDirectory(options.cacheDir);
-  await verifyInstallerBeforeLaunch(options.dmgPath, options.expectedSha256);
+  if (!options.skipVerify) {
+    await verifyInstallerBeforeLaunch(options.dmgPath, options.expectedSha256);
+  }
   const scriptPath = path.join(options.cacheDir, `apply-mac-update-${randomUUID()}.sh`);
   await writeFile(scriptPath, buildMacReplaceScript(), { flag: "wx", mode: 0o700 });
   if (process.platform !== "win32") await chmod(scriptPath, 0o700);

@@ -1,5 +1,27 @@
 # 变更记录
 
+## 2.2.0 (Desktop) - 2026-11-26
+
+### Added
+- **全产品冲突恢复与异常态闭环出口**：
+  - 项目规则新增可审查的「覆盖修复」（`allowDriftRepair`）与「强制卸载 / 清理孤立锁文件」（`planForceUninstall` / `applyForceUninstall`），严格保留 `.agent-rules/overrides.md` 与项目非受管文件；「我的项目」「项目规则」「规则进化」补齐手动「刷新」与更新态「重新检查」。
+  - 插件、技能与 MCP 冲突行全面补齐 **「覆盖修复」**（`force: true` 差异预览）、**「强制卸载」** 与 **「清除记录」**（`forgetReceipt`），彻底消除漂移、目录被删或宿主 CLI 缺失时的永久死锁。
+  - 「来源管理」新增来源「编辑」（`sources:update`）与移除二次确认；「插件与技能」新增自定义 MCP 编辑与重复 ID 校验、MCP 抽屉「显示明文」切换；「AI 工具」支持 MCP 版本更新检测、旧版 MCP 回执接管（`mcp:inspect-legacy` / `mcp:adopt-legacy`）、旧版 Codex 插件目录迁移接管以及接管弹窗逐项勾选。
+  - 「规则进化」新增提案「重新打开」（`evolution:reopen`）、「归档」（`evolution:archive`）、「恢复默认巡检源」（`evolution:reset-watch-sources`）、巡检运行态恢复（`evolution:watch-status` / `evolution:watch-state`）、预览弹窗内「重新检测并重预览」、未保存补丁放弃确认以及同机 CLI 提案目录 `fs.watch` + 窗口聚焦自动刷新；CLI 补齐 `zhishu evolve recheck` / `reopen`。
+
+### Fixed
+- **P0 闭环、状态机与安全修复**：
+  - 项目操作锁、资产操作锁、MCP 锁与进化锁统一升级为结构化 PID/TTL 锁，解决崩溃后死锁无法恢复的问题；`inspectProjectRoot` 显式检出孤立 `.agent-rules.lock.json` 并去重损坏配置问题。
+  - 旧版过期回执（如 `v0.1.5`）遇磁盘合法官方插件（如 `v2.1.0`）时自动以磁盘现行官方快照生成干净接管候选，并统一使用 `computeCanonicalSourceDigest` 规范摘要；`PluginLibrary.list()` 忽略 `.DS_Store` / `Thumbs.db` 并隔离单条损坏快照。
+  - `McpConfigEngine` 引入 JSON 键序规范化哈希、损坏配置安全降级预览、HTTP 带连字符 Header（如 `X-API-Key`）、Codex 引号表头 `[mcp_servers."id"]` 与 CRLF 兼容，并修复 `maskedBefore` 对自定义 `secret: true` 字段的脱敏遗漏。
+  - 规则进化修复通道 2 Go/Python 规则路径与 10 项默认锚点标题、修复 `conflict` 提案编辑补丁后 `recheck` 落盘与 `approved` 指纹去重、拦截 `input.id` 覆写与 3xx 重定向 SSRF、将 Git 同步缓存标记为只读防 `reset --hard` 覆盖，并为官方文档巡检接入 `electronGenericFetch` 系统代理。
+  - 应用内更新器修复 `checkNow()` 状态机死锁、下载中断/超限时的流关闭与 `.part`/`.sh` 清理、空闲超时与背压控制、macOS 替换脚本 4 处边界缺陷、Windows `shell.openPath` UAC 提权及 `electron-updater` 取消令牌。
+  - CLI 改用严格参数解析器，支持 flag 位于目录参数之前精准作用于目标目录并拦截未知参数。
+- **P1/P2 交互体验、跨宿主与打包瘦身**：
+  - 全应用弹窗与抽屉改为内联报错展示，修复遮罩覆盖报错；`App.tsx` 统一 `effectiveSelectedRulepacks` 合并企业必选包、为所有页面增加同步防重入锁与侧边栏写操作保护、同步修复 `applyPreview`/`recoverProject` 模式切换；修复 `Dropdown` 贴近滚动边缘打开即闪退与 `PreviewDialog` `Esc`/焦点管理。
+  - 扩展 macOS/Linux/Windows GUI 场景下 Codex CLI 探测路径与单飞缓存；`tools:snapshot` 合并冗余探测请求；TRAE 探测兼容 `/Applications/TRAE CN.app`；处理 `codex` 与 `generic` 共用 `~/.agents/skills` 的提示与互斥。
+  - 移除未使用的 `react-icons`（85 MB）并将已打包前端依赖移至 `devDependencies`，使 macOS DMG 体积降至 ~124 MB；`electron-builder.config.cjs` 改为按环境变量条件配置 `mac.identity`；补齐 `ci.yml` 桌面 `typecheck`、`desktop-build.yml` 核心/适配器/插件监听与 `desktop-release.yml` 前置发布说明门禁。
+
 ## 2.1.3 (Desktop) - 2026-11-26
 
 ### Fixed

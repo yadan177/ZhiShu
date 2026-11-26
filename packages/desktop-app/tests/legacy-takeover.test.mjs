@@ -201,3 +201,117 @@ test("第三方插件、伪造官方目录、幽灵回执与符号链接均不�
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("过期旧回执（v0.1.5）遇磁盘合法官方插件（v2.1.0）自动切换干净接管，且支持冲突覆盖修复、强制卸载与清除记录", async () => {
+  const { root, userHome, legacyDir, library, operations } = await setup();
+  try {
+    const dest = path.join(userHome, ".gemini/config/plugins/zhishu-fullstack-dev");
+    const snapshot = await library.snapshot("zhishu-fullstack-dev@2.1.0");
+    for (const [rel, data] of snapshot.files) {
+      const targetFile = path.join(dest, rel);
+      await mkdir(path.dirname(targetFile), { recursive: true });
+      await writeFile(targetFile, data);
+    }
+
+    // 写入与磁盘 2.1.0 不一致的过期 0.1.5 旧回执
+    await writeFile(
+      path.join(legacyDir, "antigravity--plugin-zhishu-fullstack-dev.json"),
+      JSON.stringify({
+        id: "plugin-zhishu-fullstack-dev",
+        kind: "capability-plugin",
+        title: "全栈开发工程师",
+        version: "0.1.5",
+        target: { ideId: "antigravity", scope: "ide-user" },
+        installedAt: "2026-10-01T00:00:00.000Z",
+        destination: dest,
+        sourceKey: "zhishu-fullstack-dev@0.1.5",
+        sourceDigest: sha256("stale"),
+        managedFiles: { "plugin.json": sha256("stale-plugin-json") },
+      }),
+    );
+
+    const candidates = await operations.inspectLegacy();
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].kind, "unmanaged-official");
+    assert.equal(candidates[0].version, "2.1.0");
+    assert.deepEqual(candidates[0].issues, []);
+
+    const adopted = await operations.adoptLegacy([candidates[0].key]);
+    assert.equal(adopted.assets[0].version, "2.1.0");
+    assert.deepEqual(adopted.assets[0].issues, []);
+    // 接管后的 sourceDigest 必须与官方目录规范摘要一致
+    assert.equal(adopted.assets[0].sourceDigest, snapshot.receipt.sourceDigest);
+
+    // 人为制造文件漂移 → 常规更新受阻，但 force: true 覆盖修复畅通
+    await writeFile(path.join(dest, "plugin.json"), "{\"tampered\": true}\n");
+    const listedDrift = await operations.list();
+    assert.ok(listedDrift[0].issues.length > 0);
+    const forceRepair = await operations.preview("update", "zhishu-fullstack-dev@2.1.0", "antigravity", "plugin-zhishu-fullstack-dev", { force: true });
+    assert.deepEqual(forceRepair.conflicts, []);
+    const repaired = await operations.apply(forceRepair.token);
+    assert.deepEqual(repaired[0].issues, []);
+
+    // 再次制造漂移 → 强制卸载成功清理
+    await writeFile(path.join(dest, "plugin.json"), "{\"tampered\": 2}\n");
+    const forceUninstall = await operations.preview("uninstall", "", "antigravity", "plugin-zhishu-fullstack-dev", { force: true });
+    assert.deepEqual(forceUninstall.conflicts, []);
+    assert.deepEqual(await operations.apply(forceUninstall.token), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("PluginLibrary 忽略 .DS_Store 且 McpOperations 支持旧版 MCP 回执接管与重复自定义 ID 拦截", async () => {
+  const { root, userHome, library } = await setup();
+  const { McpOperations } = require("../build/mcp-operations.cjs");
+  try {
+    await mkdir(path.join(root, "imports"), { recursive: true });
+    await writeFile(path.join(root, "imports", ".DS_Store"), "finder junk");
+    const list = await library.list();
+    assert.equal(list.length, 6);
+
+    const legacyMcpDir = path.join(root, "legacy-mcp-receipts");
+    await mkdir(legacyMcpDir, { recursive: true });
+    const agyMcpFile = path.join(userHome, ".gemini/config/mcp_config.json");
+    await mkdir(path.dirname(agyMcpFile), { recursive: true });
+
+    const mcpLegacy = new McpOperations(path.join(root, "mcp-old"), { userHome, codexHome: path.join(userHome, ".codex") });
+    const installPlan = await mcpLegacy.preview("install", "feishu-mcp", "antigravity", {
+      FEISHU_APP_ID: "cli_legacy",
+      FEISHU_APP_SECRET: "secret_legacy_1234",
+    });
+    await mcpLegacy.apply(installPlan.token);
+    const oldReceipt = await readFile(path.join(root, "mcp-old/receipts/antigravity--feishu-mcp.json"), "utf8");
+    await writeFile(path.join(legacyMcpDir, "antigravity--feishu-mcp.json"), oldReceipt);
+
+    const mcpNew = new McpOperations(path.join(root, "mcp-new"), {
+      userHome,
+      codexHome: path.join(userHome, ".codex"),
+      legacyReceiptDirs: [legacyMcpDir],
+    });
+    const legacyCandidates = await mcpNew.inspectLegacy();
+    assert.equal(legacyCandidates.length, 1);
+    assert.equal(legacyCandidates[0].id, "feishu-mcp");
+    const adopted = await mcpNew.adoptLegacy([legacyCandidates[0].key]);
+    assert.equal(adopted.adoptedCount, 1);
+    assert.equal(adopted.mcps.length, 1);
+    assert.deepEqual(adopted.mcps[0].issues, []);
+
+    // 重复创建同 ID 自定义 MCP 必须被明确拦截，updateExisting: true 允许显式编辑
+    const customDef = {
+      schemaVersion: 1,
+      id: "corp-search",
+      title: "企业检索",
+      version: "1.0.0",
+      transport: "http",
+      url: "https://search.corp.example/mcp",
+      envSchema: [{ key: "X-API-Key", label: "Key", required: true, secret: true }],
+    };
+    await mcpNew.saveCustomServer(customDef);
+    await assert.rejects(() => mcpNew.saveCustomServer(customDef), /已存在/);
+    const updatedCatalog = await mcpNew.saveCustomServer({ ...customDef, version: "1.1.0" }, { updateExisting: true });
+    assert.equal(updatedCatalog.find((s) => s.id === "corp-search")?.version, "1.1.0");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

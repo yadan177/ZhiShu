@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import {
+  ArrowClockwise,
   ArrowLeft,
   Check,
   CheckCircle,
@@ -12,6 +13,7 @@ import { Dropdown } from "./Dropdown";
 import {
   APP_COPY,
   PLATFORM_LIST,
+  RULEPACK_BY_ID,
   RULEPACK_CATALOG,
   RULEPACK_GROUPS,
   STACK_LABELS,
@@ -45,6 +47,7 @@ interface ProjectRulesPageProps {
   error: string;
   notice: string;
   onBackToProjects: () => void;
+  onRefreshProject: () => void;
   onSelectProject: (root: string) => void;
   onChangeMode: (mode: RuleMode) => void;
   onChangeSourceKind: (kind: "github" | "workspace") => void;
@@ -56,6 +59,8 @@ interface ProjectRulesPageProps {
   onRecover: () => void;
   onCheckUpdate: () => void;
   onOpenPreview: () => void;
+  onPreviewRepair: () => void;
+  onPreviewForceUninstall: () => void;
 }
 
 function projectName(root: string): string {
@@ -78,6 +83,7 @@ export function ProjectRulesPage({
   error,
   notice,
   onBackToProjects,
+  onRefreshProject,
   onSelectProject,
   onChangeMode,
   onChangeSourceKind,
@@ -89,6 +95,8 @@ export function ProjectRulesPage({
   onRecover,
   onCheckUpdate,
   onOpenPreview,
+  onPreviewRepair,
+  onPreviewForceUninstall,
 }: ProjectRulesPageProps) {
   const effectiveSourceType = mode === "install" ? sourceKind : status?.sourceType ?? "github";
   const workspacePackIds = useMemo(
@@ -100,23 +108,52 @@ export function ProjectRulesPage({
     [selectedRulepacks, workspaceSource],
   );
 
+  // 动态收集来自本地/私有规则源、已装项目或企业必选的自定义规则包（官方 20 包目录之外）
+  const extraRulepacks = useMemo(() => {
+    const extraIds = new Set<string>();
+    const depMap = new Map<string, readonly string[]>();
+    if (workspaceSource) {
+      for (const pack of workspaceSource.packs) {
+        if (!RULEPACK_BY_ID[pack.id]) {
+          extraIds.add(pack.id);
+          depMap.set(pack.id, pack.dependencies);
+        }
+      }
+    }
+    for (const id of status?.rulepacks ?? []) {
+      if (!RULEPACK_BY_ID[id]) extraIds.add(id);
+    }
+    for (const id of selectedRulepacks) {
+      if (!RULEPACK_BY_ID[id]) extraIds.add(id);
+    }
+    for (const id of enterpriseRequiredPacks) {
+      if (!RULEPACK_BY_ID[id]) extraIds.add(id);
+    }
+    return [...extraIds].sort().map((id) => ({
+      id,
+      name: id,
+      dependencies: depMap.get(id) ?? [],
+    }));
+  }, [workspaceSource, status, selectedRulepacks, enterpriseRequiredPacks]);
+
   const isPackAvailable = (packId: string): boolean => {
     if (effectiveSourceType === "workspace") {
       if (mode === "install") {
         return workspacePackIds ? workspacePackIds.has(packId) : false;
       }
-      // 更新模式下的本地源项目可能指向用户自定义目录，不提前锁死，由核心校验。
       return true;
     }
-    // 智枢官方源 v2.0.0 及以上已完整发布目录中的全部规则包，具体可用性仍由预览阶段核心校验兜底。
-    return true;
+    return Boolean(RULEPACK_BY_ID[packId]);
   };
 
   const interrupted = (status?.interruptedTransactions.length ?? 0) > 0;
+  const hasOrphanLock = Boolean(status && !status.installed && status.issues.length > 0);
+  const hasInvalidInstalled = Boolean(status && status.installed && !status.valid);
   const installDisabled =
     busy ||
     !status ||
     status.installed ||
+    hasOrphanLock ||
     interrupted ||
     selectedRulepacks.length === 0 ||
     selectedTargets.length === 0 ||
@@ -156,6 +193,48 @@ export function ProjectRulesPage({
     onOpenPreview();
   };
 
+  const renderPackItem = (
+    pack: { id: string; name: string; dependencies: readonly string[] },
+    disabledAll: boolean,
+  ) => {
+    const available = isPackAvailable(pack.id);
+    const requiredByEnterprise = enterpriseRequiredPacks.has(pack.id) && available;
+    const selected = selectedRulepacks.includes(pack.id);
+    const implicit = !selected && implicitDeps.has(pack.id);
+    const disabled = disabledAll || !available || requiredByEnterprise;
+    return (
+      <button
+        type="button"
+        key={pack.id}
+        role="checkbox"
+        aria-checked={selected || implicit}
+        className={`rulepack-item${selected ? " selected" : implicit ? " implicit" : ""}`}
+        disabled={disabled}
+        onClick={() => onToggleRulepack(pack.id)}
+        title={
+          requiredByEnterprise
+            ? "由企业源声明为必选规范，自动锁定"
+            : pack.dependencies.length
+              ? `依赖：${pack.dependencies.join(", ")}`
+              : pack.id
+        }
+      >
+        <span className="check-box" aria-hidden="true">
+          {(selected || implicit) && <Check size={11} weight="bold" />}
+        </span>
+        <span className="rulepack-item-body">
+          <span className="rulepack-item-top">
+            <span className="rulepack-item-name">{pack.name}</span>
+            {requiredByEnterprise && <span className="badge badge--enterprise">企业必选</span>}
+            {!requiredByEnterprise && implicit && <span className="badge badge--brand">自动依赖</span>}
+            {!available && <span className="badge badge--muted">未包含</span>}
+          </span>
+          <span className="rulepack-item-id">{pack.id}</span>
+        </span>
+      </button>
+    );
+  };
+
   const renderRulepackMatrix = (disabledAll: boolean) => (
     <div className="rulepack-groups">
       {RULEPACK_GROUPS.map((group) => {
@@ -164,50 +243,19 @@ export function ProjectRulesPage({
           <div key={group.id}>
             <div className="rulepack-group-title">{group.title}</div>
             <div className="rulepack-grid">
-              {items.map((pack) => {
-                const requiredByEnterprise = enterpriseRequiredPacks.has(pack.id);
-                const selected = selectedRulepacks.includes(pack.id) || requiredByEnterprise;
-                const implicit = !selected && implicitDeps.has(pack.id);
-                const available = isPackAvailable(pack.id);
-                const disabled = disabledAll || !available || requiredByEnterprise;
-                return (
-                  <button
-                    type="button"
-                    key={pack.id}
-                    role="checkbox"
-                    aria-checked={selected || implicit}
-                    className={`rulepack-item${selected ? " selected" : implicit ? " implicit" : ""}`}
-                    disabled={disabled}
-                    onClick={() => onToggleRulepack(pack.id)}
-                    title={
-                      requiredByEnterprise
-                        ? "由企业源声明为必选规范，自动锁定"
-                        : pack.dependencies.length
-                          ? `依赖：${pack.dependencies.join(", ")}`
-                          : pack.id
-                    }
-                  >
-                    <span className="check-box" aria-hidden="true">
-                      {(selected || implicit) && <Check size={11} weight="bold" />}
-                    </span>
-                    <span className="rulepack-item-body">
-                      <span className="rulepack-item-top">
-                        <span className="rulepack-item-name">{pack.name}</span>
-                        {requiredByEnterprise && <span className="badge badge--enterprise">企业必选</span>}
-                        {!requiredByEnterprise && implicit && <span className="badge badge--brand">自动依赖</span>}
-                        {!available && effectiveSourceType === "workspace" && (
-                          <span className="badge badge--muted">未包含</span>
-                        )}
-                      </span>
-                      <span className="rulepack-item-id">{pack.id}</span>
-                    </span>
-                  </button>
-                );
-              })}
+              {items.map((pack) => renderPackItem(pack, disabledAll))}
             </div>
           </div>
         );
       })}
+      {extraRulepacks.length > 0 && (
+        <div key="extra">
+          <div className="rulepack-group-title">自定义 / 扩展规则包</div>
+          <div className="rulepack-grid">
+            {extraRulepacks.map((pack) => renderPackItem(pack, disabledAll))}
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -300,6 +348,17 @@ export function ProjectRulesPage({
               }))}
             />
           </div>
+          {status && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onRefreshProject}
+              disabled={busy || unavailable}
+            >
+              <ArrowClockwise size={15} aria-hidden="true" />
+              {APP_COPY.actions.refresh}
+            </button>
+          )}
         </div>
 
         {status && (
@@ -310,7 +369,9 @@ export function ProjectRulesPage({
                   interrupted
                     ? "badge--warning"
                     : !status.installed
-                      ? "badge--muted"
+                      ? status.issues.length > 0
+                        ? "badge--danger"
+                        : "badge--muted"
                       : status.valid
                         ? "badge--success"
                         : "badge--danger"
@@ -319,18 +380,24 @@ export function ProjectRulesPage({
                 {interrupted
                   ? APP_COPY.status.interrupted
                   : !status.installed
-                    ? APP_COPY.status.uninstalled
+                    ? status.issues.length > 0
+                      ? APP_COPY.status.invalid
+                      : APP_COPY.status.uninstalled
                     : status.valid
                       ? APP_COPY.status.healthy
                       : APP_COPY.status.invalid}
               </span>
               {status.installed && (
                 <>
-                  <span className={`badge ${status.sourceType === "workspace" ? "badge--enterprise" : "badge--brand"}`}>
-                    {status.sourceType === "workspace" ? APP_COPY.sources.workspace : APP_COPY.sources.github}
-                  </span>
+                  {status.sourceType && (
+                    <span className={`badge ${status.sourceType === "workspace" ? "badge--enterprise" : "badge--brand"}`}>
+                      {status.sourceType === "workspace" ? APP_COPY.sources.workspace : APP_COPY.sources.github}
+                    </span>
+                  )}
                   {status.version && <span className="badge badge--muted">{status.version}</span>}
-                  <span className="mono-inline">{formatPlatformList(status.targets)}</span>
+                  {status.targets.length > 0 && (
+                    <span className="mono-inline">{formatPlatformList(status.targets)}</span>
+                  )}
                 </>
               )}
               {!status.installed &&
@@ -369,6 +436,38 @@ export function ProjectRulesPage({
           </div>
         )}
 
+        {!interrupted && (hasInvalidInstalled || hasOrphanLock) && status && (
+          <div className="alert-banner danger" role="alert">
+            <div className="alert-banner-body">
+              <WarningCircle size={18} style={{ flex: "none" }} />
+              <span>
+                {status.issues[0]?.message ?? "项目规则状态异常"}
+                {status.issues.length > 1 ? `（共 ${status.issues.length} 项）` : ""}
+              </span>
+            </div>
+            <div className="asset-actions">
+              {hasInvalidInstalled && (
+                <button
+                  type="button"
+                  className="primary-button btn-compact"
+                  onClick={onPreviewRepair}
+                  disabled={busy || unavailable}
+                >
+                  {APP_COPY.actions.previewRepair}
+                </button>
+              )}
+              <button
+                type="button"
+                className="danger-outline-button btn-compact"
+                onClick={onPreviewForceUninstall}
+                disabled={busy || unavailable}
+              >
+                {hasOrphanLock ? "清理孤立锁文件" : APP_COPY.actions.previewForceUninstall}
+              </button>
+            </div>
+          </div>
+        )}
+
         {mode === "install" && (
           <>
             <section className="surface-card">
@@ -378,7 +477,7 @@ export function ProjectRulesPage({
                   <button
                     type="button"
                     className={sourceKind === "github" ? "active" : ""}
-                    disabled={busy || !!status?.installed}
+                    disabled={busy || !!status?.installed || interrupted}
                     onClick={() => onChangeSourceKind("github")}
                   >
                     {APP_COPY.sources.github}
@@ -386,7 +485,7 @@ export function ProjectRulesPage({
                   <button
                     type="button"
                     className={sourceKind === "workspace" ? "active" : ""}
-                    disabled={busy || !!status?.installed}
+                    disabled={busy || !!status?.installed || interrupted}
                     onClick={() => onChangeSourceKind("workspace")}
                   >
                     {APP_COPY.sources.workspace}
@@ -394,7 +493,7 @@ export function ProjectRulesPage({
                 </div>
               </div>
               <div className="source-row">
-                {sources.filter((src) => src.access === "local" || (src.access === "git" && !!src.localCheckoutPath)).length > 0 && (
+                {sources.filter((src) => src.access === "local" || src.access === "git").length > 0 && (
                   <div className="dropdown-field">
                     <span>已注册源</span>
                     <Dropdown
@@ -408,19 +507,21 @@ export function ProjectRulesPage({
                                 (s.access === "git" && s.localCheckoutPath === workspaceSource?.root),
                             )?.id
                       }
-                      disabled={busy || !!status?.installed}
+                      disabled={busy || !!status?.installed || interrupted}
                       placeholder="选择已注册来源"
                       onChange={(id) => {
                         const chosen = sources.find((item) => item.id === id);
                         if (chosen) onSelectRegisteredSource(chosen);
                       }}
-                      options={sources
-                        .filter((s) => s.access === "github-release" || s.access === "local" || !!s.localCheckoutPath)
-                        .map((s) => ({
+                      options={sources.map((s) => {
+                        const unsyncedGit = s.access === "git" && !s.localCheckoutPath;
+                        return {
                           value: s.id,
-                          label: `${s.name}（${s.tier === "enterprise" ? "企业" : s.tier === "personal" ? "个人" : "官方"}）`,
-                          description: s.location,
-                        }))}
+                          label: `${s.name}（${s.tier === "enterprise" ? "企业" : s.tier === "personal" ? "个人" : "官方"}${unsyncedGit ? " · 未同步" : ""}）`,
+                          description: unsyncedGit ? "请先在「来源管理」完成同步后再选用" : s.location,
+                          disabled: unsyncedGit,
+                        };
+                      })}
                     />
                   </div>
                 )}
@@ -435,7 +536,7 @@ export function ProjectRulesPage({
                       type="button"
                       className="secondary-button"
                       onClick={onChooseWorkspaceSource}
-                      disabled={busy || !!status?.installed}
+                      disabled={busy || !!status?.installed || interrupted}
                     >
                       <FolderOpen size={15} aria-hidden="true" />
                       {APP_COPY.actions.chooseWorkspaceSource}
@@ -466,7 +567,7 @@ export function ProjectRulesPage({
                     type="button"
                     className="secondary-button"
                     onClick={onApplyRecommendation}
-                    disabled={busy}
+                    disabled={busy || interrupted}
                   >
                     <Sparkle size={14} aria-hidden="true" />
                     {APP_COPY.actions.applyRecommendation}
@@ -608,6 +709,16 @@ export function ProjectRulesPage({
           )}
         </div>
         <div className="workspace-footer-actions">
+          {mode === "update" && updateCheck?.available && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onCheckUpdate}
+              disabled={updateDisabled}
+            >
+              {APP_COPY.actions.recheckUpdate}
+            </button>
+          )}
           <button
             type="button"
             className={mode === "uninstall" ? "danger-button" : "primary-button"}

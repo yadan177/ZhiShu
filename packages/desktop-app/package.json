@@ -1,6 +1,6 @@
 {
   "name": "zhishu-desktop",
-  "version": "2.1.3",
+  "version": "2.2.0",
   "private": true,
   "description": "智枢桌面版",
   "main": "build/main.cjs",
@@ -13,16 +13,12 @@
     "pack:win": "npm run build && electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never"
   },
   "dependencies": {
-    "@phosphor-icons/react": "^2.1.10",
     "electron-updater": "^6.8.9",
-    "fflate": "0.8.3",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
-    "react-icons": "^5.7.0",
     "tar": "^7.5.22",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@phosphor-icons/react": "^2.1.10",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
@@ -30,13 +26,16 @@
     "electron": "44.4.5",
     "electron-builder": "26.15.3",
     "esbuild": "^0.28.2",
+    "fflate": "0.8.3",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
     "typescript": "^5.9.3",
     "vite": "^6.4.3"
   },
   "build": {
     "appId": "cn.zhinao.zhishu",
     "productName": "智枢",
-    "buildVersion": "2.1.3",
+    "buildVersion": "2.2.0",
     "directories": {
       "output": "release"
     },
@@ -64,8 +63,7 @@
         "dmg"
       ],
       "category": "public.app-category.developer-tools",
-      "icon": "assets/icon.icns",
-      "identity": null
+      "icon": "assets/icon.icns"
     },
     "win": {
       "target": [

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -343,6 +343,56 @@ test("CLI init 支持 --rulepacks 多岗位组合与 Antigravity / TRAE 目标",
     const bad = command("init", path.join(root, "bad-packs"), "--source-workspace", source, "--rulepacks", "common,common");
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /--rulepacks/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI 严格参数解析：flag 写在目录之前精准作用于目标目录，拒绝未知参数，且支持 evolve recheck/reopen", async () => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "zhishu-cli-strict-args-")));
+  try {
+    const source = path.join(root, "source");
+    const target = path.join(root, "target");
+    await mkdir(target);
+    await cp(path.join(repository, "rulepacks"), path.join(source, "rulepacks"), { recursive: true });
+
+    // flag 位于目标目录之前时必须准确作用于 target，不能误操作 process.cwd()
+    expectExit(command("init", "--source-workspace", source, target), 0, "flag 在前初始化");
+    expectExit(command("validate", target), 0, "校验目标目录");
+    const unknownFlag = command("validate", "--not-a-real-flag", target);
+    assert.equal(unknownFlag.status, 1);
+    assert.match(unknownFlag.stderr, /不支持的参数/);
+
+    // 测试 zhishu evolve capture -> reject -> reopen -> recheck
+    const evoDir = path.join(root, "evolution-state");
+    const envWithEvo = { ...process.env, ZHISHU_EVOLUTION_DIR: evoDir };
+    const runEvo = (...args) =>
+      spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", env: envWithEvo });
+
+    const cap = runEvo(
+      "evolve",
+      "capture",
+      "--title",
+      "CLI 进化闭环验证",
+      "--target-path",
+      "rulepacks/common/entry.md",
+      "--anchor",
+      "## 1. 优先级",
+      "--after",
+      "- CLI 闭环测试新增条款。",
+      "--evidence",
+      "测试记录",
+      "--source-workspace",
+      source,
+    );
+    expectExit(cap, 0, "evolve capture");
+    const idMatch = /(?:cap|ovr|doc|evo)-[a-z0-9-]+/i.exec(cap.stdout);
+    assert.ok(idMatch, `未在输出中找到提案 ID：${cap.stdout}`);
+    const proposalId = idMatch[0];
+
+    expectExit(runEvo("evolve", "reject", proposalId, "--reason", "临时驳回"), 0, "evolve reject");
+    expectExit(runEvo("evolve", "reopen", proposalId), 0, "evolve reopen");
+    expectExit(runEvo("evolve", "recheck", proposalId, "--source-workspace", source), 0, "evolve recheck");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -4,6 +4,7 @@ import { stringify } from "yaml";
 
 import { AGENTS_MD_TARGETS, codexAdapter } from "../../../adapters/codex/src/index.ts";
 import {
+  applyForceUninstall,
   applyProject,
   applyUninstall,
   assertReleaseAssetUnchanged,
@@ -18,6 +19,7 @@ import {
   listRetainedRulePaths,
   loadProjectConfig,
   loadProjectLock,
+  planForceUninstall,
   planProject,
   planUninstall,
   recommendRulepacksForDetection,
@@ -176,6 +178,10 @@ export async function inspectProjectRoot(root: string): Promise<ProjectStatus> {
   const recommendedRulepacks = recommendRulepacksForDetection(detection);
   if (!(await isPresent(path.join(resolved, "agent-rules.yaml")))) {
     const defaultOverrides = ".agent-rules/overrides.md";
+    const orphanLock = await isPresent(path.join(resolved, ".agent-rules.lock.json"));
+    const orphanIssues: ValidationIssue[] = orphanLock
+      ? [{ code: "orphan-lock", message: "检测到孤立的规则锁文件 .agent-rules.lock.json（缺少 agent-rules.yaml），请先强制清理后再安装" }]
+      : [];
     return {
       root: resolved,
       installed: false,
@@ -187,7 +193,7 @@ export async function inspectProjectRoot(root: string): Promise<ProjectStatus> {
       interruptedTransactions,
       detection,
       recommendedRulepacks,
-      issues: [],
+      issues: orphanIssues,
     };
   }
   const validation = await validateProject(resolved, codexAdapter);
@@ -197,21 +203,37 @@ export async function inspectProjectRoot(root: string): Promise<ProjectStatus> {
   let sourceType: "github" | "workspace" | undefined;
   let sourceLabel: string | undefined;
   let overridesPath = ".agent-rules/overrides.md";
-  try {
-    const config = await loadProjectConfig(resolved);
-    rulepacks = config.rulepacks;
-    targets = config.targets;
-    sourceType = config.source.type;
-    sourceLabel = config.source.type === "github" ? config.source.repository : config.source.path;
-    overridesPath = config.project.overrides;
-  } catch (error) {
-    validation.issues.push({ code: "invalid-config", message: String(error) });
+  const hasConfigSymlinkOrError = validation.issues.some(
+    (issue) => issue.code === "invalid-config" || (issue.code === "symlink-path" && issue.message.includes("agent-rules.yaml")),
+  );
+  if (!hasConfigSymlinkOrError) {
+    try {
+      const configStat = await lstat(path.join(resolved, "agent-rules.yaml"));
+      if (configStat.isFile() && !configStat.isSymbolicLink()) {
+        const config = await loadProjectConfig(resolved);
+        rulepacks = config.rulepacks;
+        targets = config.targets;
+        sourceType = config.source.type;
+        sourceLabel = config.source.type === "github" ? config.source.repository : config.source.path;
+        overridesPath = config.project.overrides;
+      }
+    } catch (error) {
+      validation.issues.push({ code: "invalid-config", message: String(error) });
+    }
   }
-  try {
-    const lock = await loadProjectLock(resolved);
-    version = lock.sourceVersion ?? lock.rulepacks.common ?? Object.values(lock.rulepacks)[0];
-  } catch {
-    // 锁文件损坏的详细错误已由上方的 validateProject 收集上报。
+  const hasLockSymlinkOrError = validation.issues.some(
+    (issue) => issue.code === "invalid-lock" || (issue.code === "symlink-path" && issue.message.includes(".agent-rules.lock.json")),
+  );
+  if (!hasLockSymlinkOrError) {
+    try {
+      const lockStat = await lstat(path.join(resolved, ".agent-rules.lock.json"));
+      if (lockStat.isFile() && !lockStat.isSymbolicLink()) {
+        const lock = await loadProjectLock(resolved);
+        version = lock.sourceVersion ?? lock.rulepacks.common ?? Object.values(lock.rulepacks)[0];
+      }
+    } catch {
+      // 锁文件损坏的详细错误已由上方的 validateProject 收集上报。
+    }
   }
   const overridesExists = await isPresent(path.join(resolved, overridesPath));
   return {
@@ -242,7 +264,7 @@ export interface UpdateCheck {
 }
 
 export interface Preview {
-  kind: "install" | "update" | "uninstall";
+  kind: "install" | "update" | "uninstall" | "repair" | "force-uninstall";
   root: string;
   changes: ProjectChange[];
   retainedPaths: string[];
@@ -262,7 +284,17 @@ type Pending =
   | { kind: "install"; sourceType: "workspace"; root: string; workspaceRoot: string; rulepacks: string[]; targets: PlatformChoice[]; plan: ProjectPlan }
   | { kind: "update"; sourceType: "github"; root: string; repository: string; plan: ProjectPlan; config: ProjectConfig; configContent: string; nextConfigContent?: string; source: LoadedSource; release: ReleaseInfo }
   | { kind: "update"; sourceType: "workspace"; root: string; workspacePath: string; plan: ProjectPlan; config: ProjectConfig; configContent: string; nextConfigContent?: string }
-  | { kind: "uninstall"; root: string; plan: UninstallPlan };
+  | { kind: "repair"; sourceType: "github"; root: string; repository: string; plan: ProjectPlan; config: ProjectConfig; nextConfigContent: string; source: LoadedSource; release: ReleaseInfo }
+  | { kind: "repair"; sourceType: "workspace"; root: string; workspacePath: string; plan: ProjectPlan; config: ProjectConfig; nextConfigContent: string }
+  | { kind: "uninstall"; root: string; plan: UninstallPlan }
+  | { kind: "force-uninstall"; root: string; plan: UninstallPlan };
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.every((item, index) => item === b[index]);
+}
 
 export class DesktopOperations {
   private pending: Pending | undefined;
@@ -279,13 +311,23 @@ export class DesktopOperations {
   }
 
   private async discardPending(): Promise<void> {
-    if ((this.pending?.kind === "install" || this.pending?.kind === "update") && this.pending.sourceType === "github") {
-      await this.pending.source.cleanup();
-    }
+    const current = this.pending;
     this.pending = undefined;
+    if (
+      current &&
+      (current.kind === "install" || current.kind === "update" || current.kind === "repair") &&
+      current.sourceType === "github"
+    ) {
+      await current.source.cleanup().catch(() => {});
+    }
   }
 
   async clearPreview(): Promise<void> {
+    if (!this.pending) return;
+    if (this.busy) {
+      await this.discardPending();
+      return;
+    }
     return this.exclusive(() => this.discardPending());
   }
 
@@ -366,7 +408,8 @@ export class DesktopOperations {
 
       const repository = requestedSource.repository ?? REPOSITORY;
       const config = githubConfigFor(requestedRulepacks, requestedTargets, repository);
-      const source = await this.sourceLoader();
+      const release = repository !== REPOSITORY ? await this.releaseLoader(repository) : undefined;
+      const source = await this.sourceLoader(release);
       try {
         const plan = await planProject(resolved, config, codexAdapter, source.snapshot);
         const changes: ProjectChange[] = [
@@ -450,8 +493,8 @@ export class DesktopOperations {
       const { config, currentVersion } = await this.updateProject(resolved);
       const requestedTargets = checkedTargets(targets ?? config.targets as PlatformChoice[]);
       const requestedRulepacks = rulepacks !== undefined ? checkedRulepacks(rulepacks) : config.rulepacks;
-      const targetsChanged = requestedTargets.join("\0") !== config.targets.join("\0");
-      const rulepacksChanged = requestedRulepacks.join("\0") !== config.rulepacks.join("\0");
+      const targetsChanged = !sameStringSet(requestedTargets, config.targets);
+      const rulepacksChanged = !sameStringSet(requestedRulepacks, config.rulepacks);
 
       if (config.source.type === "workspace") {
         const workspacePath = config.source.path ?? ".";
@@ -504,8 +547,8 @@ export class DesktopOperations {
       if (!checked || checked.root !== resolved) throw new Error("请先检查更新");
       const { config } = await this.updateProject(resolved);
       const configContent = await readFile(path.join(resolved, "agent-rules.yaml"), "utf8");
-      const targetsChanged = checked.targets.join("\0") !== config.targets.join("\0");
-      const rulepacksChanged = checked.rulepacks.join("\0") !== config.rulepacks.join("\0");
+      const targetsChanged = !sameStringSet(checked.targets, config.targets);
+      const rulepacksChanged = !sameStringSet(checked.rulepacks, config.rulepacks);
       const configChanged = targetsChanged || rulepacksChanged;
       const nextConfig: ProjectConfig = configChanged
         ? { ...config, targets: checked.targets, rulepacks: checked.rulepacks }
@@ -633,13 +676,19 @@ export class DesktopOperations {
       const resolved = await checkedRoot(root);
       const plan = await planUninstall(resolved, codexAdapter);
       if (!plan.conflicts.length) this.pending = { kind: "uninstall", root: resolved, plan };
+      let targets: string[] = [];
+      try {
+        targets = (await loadProjectConfig(resolved)).targets;
+      } catch {
+        // 配置文件损坏时安全降级为空平台数组，避免中断冲突预览展示。
+      }
       return {
         kind: "uninstall",
         root: resolved,
         changes: plan.changes,
         retainedPaths: plan.retainedPaths,
         conflicts: plan.conflicts,
-        targets: (await loadProjectConfig(resolved)).targets,
+        targets,
       };
     });
   }
@@ -651,6 +700,176 @@ export class DesktopOperations {
       if (!pending || pending.kind !== "uninstall" || pending.root !== resolved) throw new Error("卸载预览已失效，请重新预览");
       this.pending = undefined;
       await applyUninstall(resolved, codexAdapter, pending.plan);
+      return inspectProjectRoot(resolved);
+    });
+  }
+
+  /** 异常态（漂移/锁损坏/受控区块受损）可审查覆盖修复预览：保留 overrides.md，重同步全部受管文件与锁文件。 */
+  async previewRepair(root: string, request?: InstallRequest): Promise<Preview> {
+    return this.exclusive(async () => {
+      await this.discardPending();
+      this.checked = undefined;
+      const resolved = await checkedRoot(root);
+      let existingConfig: ProjectConfig | undefined;
+      try {
+        existingConfig = await loadProjectConfig(resolved);
+      } catch {
+        existingConfig = undefined;
+      }
+      const rulepacks = request?.rulepacks?.length
+        ? checkedRulepacks(request.rulepacks)
+        : existingConfig?.rulepacks?.length
+          ? checkedRulepacks(existingConfig.rulepacks)
+          : ["common"];
+      const targets = request?.targets?.length
+        ? checkedTargets(request.targets)
+        : existingConfig?.targets?.length
+          ? checkedTargets(existingConfig.targets as PlatformChoice[])
+          : ["codex" as PlatformChoice];
+      const requestedSource: RuleSourceChoice =
+        request?.source ??
+        (existingConfig?.source.type === "workspace" && existingConfig.source.path
+          ? { type: "workspace", path: path.resolve(resolved, existingConfig.source.path) }
+          : { type: "github", repository: existingConfig?.source.repository ?? REPOSITORY });
+
+      const currentConfigText = (await isPresent(path.join(resolved, "agent-rules.yaml")))
+        ? await readFile(path.join(resolved, "agent-rules.yaml"), "utf8").catch(() => undefined)
+        : undefined;
+
+      if (requestedSource.type === "workspace") {
+        const workspaceInfo = await inspectWorkspaceSource(requestedSource.path);
+        const config = workspaceConfigFor(resolved, workspaceInfo.root, rulepacks, targets);
+        if (existingConfig?.project?.overrides) config.project.overrides = existingConfig.project.overrides;
+        const nextConfigContent = stringify(config);
+        const plan = await planProject(resolved, config, codexAdapter, undefined, { allowDriftRepair: true });
+        const changes: ProjectChange[] =
+          currentConfigText !== nextConfigContent
+            ? [{ path: "agent-rules.yaml", action: currentConfigText ? "modify" : "add", before: currentConfigText, after: nextConfigContent }, ...plan.changes]
+            : plan.changes;
+        if (!plan.conflicts.length) {
+          this.pending = {
+            kind: "repair",
+            sourceType: "workspace",
+            root: resolved,
+            workspacePath: config.source.path ?? ".",
+            plan,
+            config,
+            nextConfigContent,
+          };
+        }
+        return {
+          kind: "repair",
+          root: resolved,
+          changes,
+          retainedPaths: [config.project.overrides],
+          conflicts: plan.conflicts,
+          version: "本地源",
+          targets: config.targets,
+          rulepacks: Object.keys(plan.to),
+          sourceType: "workspace",
+        };
+      }
+
+      const repository = requestedSource.repository ?? REPOSITORY;
+      const config = githubConfigFor(rulepacks, targets, repository);
+      if (existingConfig?.project?.overrides) config.project.overrides = existingConfig.project.overrides;
+      const nextConfigContent = stringify(config);
+      const release = await this.releaseLoader(repository);
+      const source = await this.sourceLoader(release);
+      try {
+        const plan = await planProject(resolved, config, codexAdapter, source.snapshot, { allowDriftRepair: true });
+        const changes: ProjectChange[] =
+          currentConfigText !== nextConfigContent
+            ? [{ path: "agent-rules.yaml", action: currentConfigText ? "modify" : "add", before: currentConfigText, after: nextConfigContent }, ...plan.changes]
+            : plan.changes;
+        if (plan.conflicts.length) {
+          await source.cleanup();
+        } else {
+          this.pending = {
+            kind: "repair",
+            sourceType: "github",
+            root: resolved,
+            repository,
+            plan,
+            config,
+            nextConfigContent,
+            source,
+            release,
+          };
+        }
+        return {
+          kind: "repair",
+          root: resolved,
+          changes,
+          retainedPaths: [config.project.overrides],
+          conflicts: plan.conflicts,
+          version: release.version,
+          targets: config.targets,
+          rulepacks: Object.keys(plan.to),
+          sourceType: "github",
+        };
+      } catch (error) {
+        await source.cleanup();
+        throw error;
+      }
+    });
+  }
+
+  async applyRepair(root: string): Promise<ProjectStatus> {
+    return this.exclusive(async () => {
+      const resolved = await checkedRoot(root);
+      const pending = this.pending;
+      if (!pending || pending.kind !== "repair" || pending.root !== resolved) throw new Error("修复预览已失效，请重新预览");
+      this.pending = undefined;
+      if (pending.sourceType === "workspace") {
+        await applyProject(resolved, pending.config, codexAdapter, pending.nextConfigContent, undefined, pending.plan, undefined, { allowDriftRepair: true });
+        return inspectProjectRoot(resolved);
+      }
+      try {
+        await applyProject(resolved, pending.config, codexAdapter, pending.nextConfigContent, pending.source.snapshot, pending.plan, undefined, { allowDriftRepair: true });
+        return inspectProjectRoot(resolved);
+      } finally {
+        await pending.source.cleanup();
+      }
+    });
+  }
+
+  /** 异常态或孤立锁文件强制卸载预览：清理受管文件与控制文件，严格保留 overrides.md 与非受管用户文件。 */
+  async previewForceUninstall(root: string): Promise<Preview> {
+    return this.exclusive(async () => {
+      await this.discardPending();
+      this.checked = undefined;
+      const resolved = await checkedRoot(root);
+      const plan = await planForceUninstall(resolved, codexAdapter);
+      if (!plan.conflicts.length && plan.changes.length) {
+        this.pending = { kind: "force-uninstall", root: resolved, plan };
+      }
+      let targets: string[] = [];
+      try {
+        targets = (await loadProjectConfig(resolved)).targets;
+      } catch {
+        targets = [];
+      }
+      return {
+        kind: "force-uninstall",
+        root: resolved,
+        changes: plan.changes,
+        retainedPaths: plan.retainedPaths,
+        conflicts: plan.conflicts,
+        targets,
+      };
+    });
+  }
+
+  async applyForceUninstall(root: string): Promise<ProjectStatus> {
+    return this.exclusive(async () => {
+      const resolved = await checkedRoot(root);
+      const pending = this.pending;
+      if (!pending || pending.kind !== "force-uninstall" || pending.root !== resolved) {
+        throw new Error("强制卸载预览已失效，请重新预览");
+      }
+      this.pending = undefined;
+      await applyForceUninstall(resolved, codexAdapter, pending.plan);
       return inspectProjectRoot(resolved);
     });
   }

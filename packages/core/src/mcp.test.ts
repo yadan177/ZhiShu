@@ -122,3 +122,79 @@ test("McpConfigEngine 拒绝覆盖未知同名配置与符号链接路径", asyn
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("McpConfigEngine：JSON 键序规范化、HTTP 连字符 Header、自定义 secret 脱敏与冲突覆盖修复", async () => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "zhishu-mcp-p0-")));
+  try {
+    const agyConfig = path.join(root, ".gemini", "config", "mcp_config.json");
+    const codexConfig = path.join(root, ".codex", "config.toml");
+    await mkdir(path.dirname(agyConfig), { recursive: true });
+    await mkdir(path.dirname(codexConfig), { recursive: true });
+    await writeFile(codexConfig, '[mcp_servers."quoted-svc"]\nurl = "https://other.example"\n');
+
+    const httpDef = {
+      schemaVersion: 1 as const,
+      id: "corp-http-mcp",
+      title: "企业 HTTP MCP",
+      version: "1.0.0",
+      transport: "http" as const,
+      url: "https://mcp.corp.example/sse",
+      envSchema: [{ key: "X-API-Key", label: "API Key", required: true, secret: true }],
+    };
+
+    const engine = new McpConfigEngine(path.join(root, "receipts"), {
+      antigravity: agyConfig,
+      codex: codexConfig,
+    });
+
+    // 1. 支持 HTTP 带连字符 Header，并对 Antigravity / Codex 均严格脱敏
+    const secret = "xkey_super_secret_8842";
+    const agyInstall = await engine.preview("install", "antigravity", httpDef, { "X-API-Key": secret });
+    assert.deepEqual(agyInstall.conflicts, []);
+    assert.ok(!agyInstall.maskedAfter.includes(secret));
+    await engine.apply(agyInstall.token);
+
+    // 2. 重排 JSON 键序后仍应判定为无漂移
+    const rawJson = JSON.parse(await readFile(agyConfig, "utf8"));
+    const entry = rawJson.mcpServers["corp-http-mcp"];
+    rawJson.mcpServers["corp-http-mcp"] = { headers: entry.headers, serverUrl: entry.serverUrl };
+    await writeFile(agyConfig, JSON.stringify(rawJson, null, 2));
+    assert.deepEqual((await engine.list())[0]?.issues, []);
+
+    // 3. Codex 安装后再次预览时 maskedBefore 绝不泄露自定义 secret 字段
+    const codexInstall = await engine.preview("install", "codex", httpDef, { "X-API-Key": secret });
+    assert.deepEqual(codexInstall.conflicts, []);
+    await engine.apply(codexInstall.token);
+    const codexUpdate = await engine.preview(
+      "update",
+      "codex",
+      httpDef,
+      { "X-API-Key": "xkey_next_secret_9911" },
+      { allSchemas: new Map([[httpDef.id, httpDef.envSchema]]) },
+    );
+    assert.ok(!codexUpdate.maskedBefore.includes(secret));
+    assert.ok(!codexUpdate.maskedAfter.includes("xkey_next_secret_9911"));
+
+    // 4. 配置文件损坏时 preview 不崩溃且允许 allowConflictOverride 覆盖修复或 forgetReceipt
+    await writeFile(agyConfig, "{broken json");
+    const brokenPreview = await engine.preview("uninstall", "antigravity", httpDef);
+    assert.ok(brokenPreview.conflicts.length > 0);
+    await engine.forgetReceipt("antigravity", httpDef.id);
+    assert.equal((await engine.list()).filter((r) => r.toolId === "antigravity").length, 0);
+
+    // 5. Codex 漂移后通过 allowConflictOverride 强制覆盖修复
+    await writeFile(codexConfig, `${await readFile(codexConfig, "utf8")}\n# drift\n`);
+    const forceFix = await engine.preview(
+      "update",
+      "codex",
+      httpDef,
+      { "X-API-Key": "xkey_repaired_7711" },
+      { allowConflictOverride: true, allSchemas: new Map([[httpDef.id, httpDef.envSchema]]) },
+    );
+    assert.deepEqual(forceFix.conflicts, []);
+    await engine.apply(forceFix.token);
+    assert.deepEqual((await engine.list())[0]?.issues, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

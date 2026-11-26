@@ -22,8 +22,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: 核对桌面标签和源码版本
-        run: node -e 'const p=require("./packages/desktop-app/package.json"); if (process.env.GITHUB_REF_NAME !== `desktop-v${p.version}`) process.exit(1)'
+      - name: 核对桌面标签、源码版本和发布说明
+        run: node -e 'const fs=require("node:fs"); const p=require("./packages/desktop-app/package.json"); if (process.env.GITHUB_REF_NAME !== `desktop-v${p.version}`) process.exit(1); if (p.build?.buildVersion !== p.version) { console.error("build.buildVersion 与 version 不一致"); process.exit(1); } if (!fs.existsSync(`packages/desktop-app/RELEASE-${p.version}.md`)) { console.error(`缺少 packages/desktop-app/RELEASE-${p.version}.md`); process.exit(1); }'
       - run: npm run check
       - run: npm run typecheck --workspace zhishu-desktop
 
