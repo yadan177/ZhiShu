@@ -456,7 +456,7 @@ export function App() {
         <div className="sidebar-footer">
           <div className="version-card">
             <div className="version-card-row">
-              <span className="version-tag">v{softwareState?.currentVersion ?? "2.1.0"}</span>
+              <span className="version-tag">v{softwareState?.currentVersion ?? "2.1.1"}</span>
               {hasSoftwareUpdate && softwareState?.availableVersion && (
                 <span className="badge badge--brand">v{softwareState.availableVersion}</span>
               )}

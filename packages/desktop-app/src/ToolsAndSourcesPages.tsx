@@ -10,6 +10,7 @@ import {
   type DesktopApi,
   type InstalledAssetRecord,
   type InstalledMcpRecord,
+  type LegacyAssetCandidate,
   type McpPreview,
   type McpServerDefinition,
   type PluginSource,
@@ -26,7 +27,65 @@ const TOOL_LABELS: Record<AssetIde, string> = {
   generic: "通用标准目录",
 };
 
+const TOOL_SHORT_LABELS: Record<AssetIde, string> = {
+  codex: "Codex",
+  antigravity: "Antigravity",
+  traework: "TRAE",
+  generic: "通用目录",
+};
+
+const CAPABILITY_LABELS: Record<"rules" | "skill" | "mcp" | "plugin", string> = {
+  rules: "规则",
+  skill: "技能",
+  mcp: "MCP",
+  plugin: "插件",
+};
+
+const CAPABILITY_ORDER: Array<"rules" | "skill" | "mcp" | "plugin"> = ["rules", "skill", "mcp", "plugin"];
+
 const ACTION_VERBS = { install: "安装", update: "更新", uninstall: "卸载" } as const;
+
+function compareSemver(a: string, b: string): number {
+  const [aCore = "", aPre] = a.split("-", 2);
+  const [bCore = "", bPre] = b.split("-", 2);
+  const aParts = aCore.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const bParts = bCore.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const diff = (aParts[i] ?? 0) - (bParts[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  if (!aPre && bPre) return 1;
+  if (aPre && !bPre) return -1;
+  if (aPre && bPre) return aPre.localeCompare(bPre);
+  return 0;
+}
+
+function formatCompactPath(rawPath: string): string {
+  const unixHome = /^\/(?:Users|home)\/[^/]+(\/.*)?$/.exec(rawPath);
+  if (unixHome) return `~${unixHome[1] ?? ""}`;
+  const winHome = /^[A-Za-z]:\\Users\\[^\\]+(\\.*)?$/.exec(rawPath);
+  if (winHome) return `~${(winHome[1] ?? "").replace(/\\/g, "/")}`;
+  const sandboxHome = /\/user-home(\/.*)?$/.exec(rawPath);
+  if (sandboxHome) return `~${sandboxHome[1] ?? ""}`;
+  return rawPath;
+}
+
+function formatCapabilities(tool: ToolInspection): string {
+  if (tool.id === "generic") return "多工具共享技能";
+  return CAPABILITY_ORDER.filter((cap) => tool.capabilities.includes(cap))
+    .map((cap) => CAPABILITY_LABELS[cap])
+    .join(" · ");
+}
+
+function formatToolCount(tool: ToolInspection): string {
+  const total = tool.counts.plugins + tool.counts.skills + tool.counts.mcps;
+  if (total === 0) return "已装 0 项";
+  const parts: string[] = [];
+  if (tool.counts.plugins > 0) parts.push(`插件 ${tool.counts.plugins}`);
+  if (tool.counts.skills > 0) parts.push(`技能 ${tool.counts.skills}`);
+  if (tool.counts.mcps > 0) parts.push(`MCP ${tool.counts.mcps}`);
+  return `已装 ${total} 项（${parts.join(" · ")}）`;
+}
 
 export function ToolsPage({
   api,
@@ -39,10 +98,12 @@ export function ToolsPage({
   const [selectedTool, setSelectedTool] = useState<AssetIde | "all">("all");
   const [sources, setSources] = useState<PluginSource[]>([]);
   const [installedAssets, setInstalledAssets] = useState<InstalledAssetRecord[]>([]);
+  const [legacyItems, setLegacyItems] = useState<LegacyAssetCandidate[]>([]);
   const [mcpCatalog, setMcpCatalog] = useState<McpServerDefinition[]>([]);
   const [installedMcps, setInstalledMcps] = useState<InstalledMcpRecord[]>([]);
   const [updateKeys, setUpdateKeys] = useState<Record<string, string>>({});
 
+  const [showLegacyModal, setShowLegacyModal] = useState(false);
   const [assetPlan, setAssetPlan] = useState<UserAssetPlan>();
   const [mcpPreview, setMcpPreview] = useState<McpPreview>();
   const [editingMcp, setEditingMcp] = useState<{ record: InstalledMcpRecord; def: McpServerDefinition }>();
@@ -54,18 +115,20 @@ export function ToolsPage({
   const [notice, setNotice] = useState("");
 
   async function refreshAll(currentApi: DesktopApi): Promise<void> {
-    const [toolList, imports, assets, catalog, mcps] = await Promise.all([
+    const [toolList, imports, assets, catalog, mcps, legacy] = await Promise.all([
       currentApi.inspectTools(),
       currentApi.listPluginImports(),
       currentApi.listUserAssets(),
       currentApi.listMcpCatalog(),
       currentApi.listInstalledMcps(),
+      currentApi.inspectLegacyAssets ? currentApi.inspectLegacyAssets() : Promise.resolve([]),
     ]);
     setTools(toolList);
     setSources(imports);
     setInstalledAssets(assets);
     setMcpCatalog(catalog);
     setInstalledMcps(mcps);
+    setLegacyItems(legacy);
   }
 
   async function run(action: () => Promise<void>): Promise<void> {
@@ -87,12 +150,13 @@ export function ToolsPage({
     setBusy(true);
     void (async () => {
       try {
-        const [toolList, imports, assets, catalog, mcps] = await Promise.all([
+        const [toolList, imports, assets, catalog, mcps, legacy] = await Promise.all([
           api.inspectTools(),
           api.listPluginImports(),
           api.listUserAssets(),
           api.listMcpCatalog(),
           api.listInstalledMcps(),
+          api.inspectLegacyAssets ? api.inspectLegacyAssets() : Promise.resolve([]),
         ]);
         if (cancelled) return;
         setTools(toolList);
@@ -100,6 +164,7 @@ export function ToolsPage({
         setInstalledAssets(assets);
         setMcpCatalog(catalog);
         setInstalledMcps(mcps);
+        setLegacyItems(legacy);
       } catch (problem) {
         if (!cancelled) setError(formatErrorMessage(problem));
       } finally {
@@ -117,17 +182,37 @@ export function ToolsPage({
   const filteredMcps = selectedTool === "all"
     ? installedMcps
     : installedMcps.filter((item) => item.toolId === selectedTool);
+  const visibleLegacy = selectedTool === "all"
+    ? legacyItems
+    : legacyItems.filter((item) => item.ideId === selectedTool);
+
+  const enrichedAssets = filteredAssets.map((item) => {
+    const sourceName = item.sourceKey.split("@")[0].replace(/^skill\./, "");
+    const expectedKind = item.sourceKey.startsWith("skill.") ? "skill" : "capability-plugin";
+    const candidates = sources
+      .filter((candidate) => candidate.name === sourceName && candidate.kind === expectedKind)
+      .sort((a, b) => compareSemver(a.version, b.version));
+    const latestCandidate = candidates.at(-1);
+    const hasNewerVersion = latestCandidate ? compareSemver(latestCandidate.version, item.version) > 0 : false;
+    const isPreset = candidates.some((c) => c.preset) || (!item.sourceKey.startsWith("skill.") && sourceName.startsWith("zhishu-"));
+    return { item, candidates, latestCandidate, hasNewerVersion, isPreset };
+  });
+
+  const conflictCount =
+    enrichedAssets.filter(({ item }) => item.issues.length > 0).length +
+    filteredMcps.filter((record) => record.issues.length > 0).length;
+  const updatableCount = enrichedAssets.filter(
+    ({ item, hasNewerVersion }) => item.issues.length === 0 && hasNewerVersion,
+  ).length;
+  const totalVisibleCount = enrichedAssets.length + filteredMcps.length;
+  const normalCount = Math.max(0, totalVisibleCount - conflictCount - updatableCount);
 
   return (
     <div className="workspace-scroll">
       <header className="page-header">
         <div className="page-header-left">
           <h1>{APP_COPY.nav.tools}</h1>
-          {selectedTool !== "all" && (
-            <button type="button" className="pill-btn active" onClick={() => setSelectedTool("all")}>
-              筛选：{TOOL_LABELS[selectedTool]} ×
-            </button>
-          )}
+          {tools.length > 0 && <span className="badge badge--brand">已检测 {tools.length} 个</span>}
         </div>
         <div className="page-header-actions">
           <button
@@ -150,7 +235,6 @@ export function ToolsPage({
       <section className="tool-grid" aria-label="本机 AI 工具检测">
         {tools.map((tool) => {
           const isSelected = selectedTool === tool.id;
-          const total = tool.counts.plugins + tool.counts.skills + tool.counts.mcps;
           return (
             <button
               type="button"
@@ -164,120 +248,240 @@ export function ToolsPage({
                   className={`badge ${
                     tool.experimental
                       ? "badge--warning"
-                      : tool.available
-                        ? "badge--success"
-                        : "badge--muted"
+                      : tool.id === "generic"
+                        ? "badge--muted"
+                        : tool.available
+                          ? "badge--success"
+                          : "badge--muted"
                   }`}
                 >
-                  {tool.statusLabel}
+                  {tool.id === "generic" ? "通用" : tool.statusLabel}
                 </span>
               </div>
               <span className="tool-card-path" title={tool.paths.join("\n")}>
                 {tool.displayPath}
               </span>
-              <div className="asset-card-meta">
-                <span className="badge badge--muted">已装 {total}</span>
-                {tool.counts.plugins > 0 && <span className="badge badge--enterprise">插件 {tool.counts.plugins}</span>}
-                {tool.counts.skills > 0 && <span className="badge badge--brand">技能 {tool.counts.skills}</span>}
-                {tool.counts.mcps > 0 && <span className="badge badge--mcp">MCP {tool.counts.mcps}</span>}
-              </div>
+              <span className="tool-card-caps">{formatCapabilities(tool)}</span>
+              <span className={`tool-card-count${isSelected ? " is-selected" : ""}`}>
+                {formatToolCount(tool)}
+              </span>
             </button>
           );
         })}
       </section>
 
+      {visibleLegacy.length > 0 && (
+        <section className="legacy-takeover-banner" role="status" aria-label="旧版记录接管提示">
+          <div className="legacy-takeover-left">
+            <span className="badge badge--warning">旧版记录</span>
+            <span>发现 {visibleLegacy.length} 项旧版智枢记录或未纳管官方插件</span>
+          </div>
+          <button
+            type="button"
+            className="secondary-button btn-compact"
+            disabled={busy || !api}
+            onClick={() => setShowLegacyModal(true)}
+          >
+            接管旧版
+          </button>
+        </section>
+      )}
+
       <section className="surface-card">
         <div className="card-header">
-          <h2>
-            已安装清单{selectedTool !== "all" ? ` · ${TOOL_LABELS[selectedTool]}` : ""}
-          </h2>
-          <span className="badge badge--muted">{filteredAssets.length + filteredMcps.length}</span>
+          <div className="tools-list-header-left">
+            <h2>{selectedTool === "all" ? "已安装清单" : `${TOOL_LABELS[selectedTool]} · 已安装`}</h2>
+            {totalVisibleCount === 0 ? (
+              <span className="badge badge--muted">0</span>
+            ) : (
+              <>
+                {normalCount > 0 && <span className="badge badge--success">{normalCount} 正常</span>}
+                {updatableCount > 0 && <span className="badge badge--brand">{updatableCount} 可更新</span>}
+                {conflictCount > 0 && <span className="badge badge--danger">{conflictCount} 需处理</span>}
+              </>
+            )}
+          </div>
+          {selectedTool !== "all" && (
+            <button
+              type="button"
+              className="secondary-button btn-compact"
+              onClick={() => setSelectedTool("all")}
+            >
+              查看全部
+            </button>
+          )}
         </div>
 
-        {filteredAssets.length === 0 && filteredMcps.length === 0 ? (
+        {totalVisibleCount === 0 ? (
           <div className="empty-state">
-            <span>暂无已安装的插件、技能或 MCP</span>
+            <span>
+              {selectedTool === "all"
+                ? "暂无已安装的插件、技能或 MCP"
+                : `${TOOL_LABELS[selectedTool]} 暂无已安装的插件、技能或 MCP`}
+            </span>
             <button type="button" className="primary-button" onClick={onOpenAssets}>
               前往{APP_COPY.nav.assets}
             </button>
           </div>
         ) : (
-          <>
-            {filteredAssets.map((item) => {
-              const sourceName = item.sourceKey.split("@")[0].replace(/^skill\./, "");
-              const candidates = sources.filter(
-                (candidate) =>
-                  candidate.name === sourceName &&
-                  candidate.kind === (item.sourceKey.startsWith("skill.") ? "skill" : "capability-plugin"),
-              );
+          <div className="tool-asset-list">
+            {enrichedAssets.map(({ item, candidates, latestCandidate, hasNewerVersion, isPreset }) => {
               const rowKey = `${item.target.ideId}:${item.id}`;
+              const hasConflict = item.issues.length > 0;
+              const isMultiVersion = candidates.length >= 2;
               const selectedVersionKey =
-                candidates.find((c) => c.key === updateKeys[rowKey])?.key ?? candidates.at(-1)?.key ?? item.sourceKey;
+                candidates.find((c) => c.key === updateKeys[rowKey])?.key ?? latestCandidate?.key ?? item.sourceKey;
+              const selectedCandidate = candidates.find((c) => c.key === selectedVersionKey);
+              const selectedDiffers = Boolean(selectedCandidate && selectedCandidate.version !== item.version);
+              const compactDest = formatCompactPath(item.destination);
+              const subLineText = hasConflict
+                ? `${compactDest} · ${item.issues[0]}${item.issues.length > 1 ? `（共 ${item.issues.length} 项）` : ""}`
+                : compactDest;
+              const subLineTitle = hasConflict
+                ? `${item.destination}\n${item.issues.join("\n")}`
+                : item.destination;
+
               return (
-                <article className="imported-plugin" key={rowKey}>
-                  <div className="imported-plugin-row">
+                <article className={`tool-asset-row${hasConflict ? " has-conflict" : ""}`} key={rowKey}>
+                  <div className="tool-asset-main">
                     <IconTile size="sm">
                       <AssetGlyph kind={glyphForAsset(item.id, item.kind)} size={18} />
                     </IconTile>
-                    <span className={`badge ${item.kind === "skill" ? "badge--brand" : "badge--enterprise"}`}>
-                      {item.kind === "skill" ? "技能" : "插件"}
-                    </span>
-                    <strong>
-                      {item.title} · v{item.version}
-                    </strong>
-                    <span className="badge badge--muted">{TOOL_LABELS[item.target.ideId]}</span>
-                    <span className={`badge ${item.issues.length ? "badge--danger" : "badge--success"}`}>
-                      {item.issues.length ? "冲突·需处理" : item.recognition === "host-verified" ? "已识别" : "正常"}
-                    </span>
-                    {item.recognitionNote && <span className="badge badge--warning">已停用</span>}
+                    <div className="tool-asset-info">
+                      <div className="tool-asset-title-line">
+                        <span className={`badge ${item.kind === "skill" ? "badge--brand" : "badge--enterprise"}`}>
+                          {item.kind === "skill" ? "技能" : "插件"}
+                        </span>
+                        <strong className="tool-asset-title">{item.title}</strong>
+                        <span className="tool-asset-version">v{item.version}</span>
+                        <span className="badge badge--muted">{isPreset ? "官方预设" : "本地导入"}</span>
+                        {selectedTool === "all" && (
+                          <span className="badge badge--muted">{TOOL_SHORT_LABELS[item.target.ideId]}</span>
+                        )}
+                      </div>
+                      <span
+                        className={`tool-asset-path${hasConflict ? " is-danger" : ""}`}
+                        title={subLineTitle}
+                      >
+                        {subLineText}
+                      </span>
+                    </div>
                   </div>
-                  <span className="asset-destination">{item.destination}</span>
-                  {item.issues.map((issue) => (
-                    <p className="inline-issue" key={issue}>
-                      {issue}
-                    </p>
-                  ))}
-                  <div className="asset-actions">
-                    {candidates.length > 0 && (
-                      <div className="dropdown-field">
-                        <span>版本</span>
+
+                  <div className="tool-asset-actions">
+                    {hasConflict ? (
+                      <>
+                        <span className="badge badge--danger">冲突·需处理</span>
+                        <button type="button" className="secondary-button btn-compact" disabled>
+                          卸载
+                        </button>
+                      </>
+                    ) : isMultiVersion ? (
+                      <>
+                        {hasNewerVersion && latestCandidate ? (
+                          <span className="badge badge--brand">可更新至 v{latestCandidate.version}</span>
+                        ) : (
+                          <span className="badge badge--success">
+                            {item.recognition === "host-verified" ? "已识别" : "正常"}
+                          </span>
+                        )}
+                        {item.recognitionNote && <span className="badge badge--warning">已停用</span>}
                         <Dropdown
+                          className="dropdown--compact"
                           label={`版本：${item.title}`}
                           value={selectedVersionKey}
                           disabled={busy}
                           onChange={(value) => setUpdateKeys((cur) => ({ ...cur, [rowKey]: value }))}
                           options={candidates.map((c) => ({ value: c.key, label: `v${c.version}` }))}
                         />
-                      </div>
+                        <button
+                          type="button"
+                          className={`${selectedDiffers ? "primary-button" : "secondary-button"} btn-compact`}
+                          disabled={busy || !api || !selectedDiffers}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                setAssetPlan(
+                                  await api.previewUserAsset("update", selectedVersionKey, item.target.ideId, item.id),
+                                );
+                              });
+                            }
+                          }}
+                        >
+                          更新
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button btn-compact"
+                          disabled={busy || !api}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                setAssetPlan(await api.previewUserAsset("uninstall", "", item.target.ideId, item.id));
+                              });
+                            }
+                          }}
+                        >
+                          卸载
+                        </button>
+                      </>
+                    ) : hasNewerVersion && latestCandidate ? (
+                      <>
+                        <span className="badge badge--brand">可更新至 v{latestCandidate.version}</span>
+                        {item.recognitionNote && <span className="badge badge--warning">已停用</span>}
+                        <button
+                          type="button"
+                          className="primary-button btn-compact"
+                          disabled={busy || !api}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                setAssetPlan(
+                                  await api.previewUserAsset("update", latestCandidate.key, item.target.ideId, item.id),
+                                );
+                              });
+                            }
+                          }}
+                        >
+                          更新
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button btn-compact"
+                          disabled={busy || !api}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                setAssetPlan(await api.previewUserAsset("uninstall", "", item.target.ideId, item.id));
+                              });
+                            }
+                          }}
+                        >
+                          卸载
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="badge badge--success">
+                          {item.recognition === "host-verified" ? "已识别" : "正常"}
+                        </span>
+                        {item.recognitionNote && <span className="badge badge--warning">已停用</span>}
+                        <button
+                          type="button"
+                          className="secondary-button btn-compact"
+                          disabled={busy || !api}
+                          onClick={() => {
+                            if (api) {
+                              void run(async () => {
+                                setAssetPlan(await api.previewUserAsset("uninstall", "", item.target.ideId, item.id));
+                              });
+                            }
+                          }}
+                        >
+                          卸载
+                        </button>
+                      </>
                     )}
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={busy || !api || !candidates.length || !!item.issues.length}
-                      onClick={() => {
-                        if (api) {
-                          void run(async () => {
-                            setAssetPlan(await api.previewUserAsset("update", selectedVersionKey, item.target.ideId, item.id));
-                          });
-                        }
-                      }}
-                    >
-                      更新
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={busy || !api || !!item.issues.length}
-                      onClick={() => {
-                        if (api) {
-                          void run(async () => {
-                            setAssetPlan(await api.previewUserAsset("uninstall", "", item.target.ideId, item.id));
-                          });
-                        }
-                      }}
-                    >
-                      卸载
-                    </button>
                   </div>
                 </article>
               );
@@ -285,49 +489,62 @@ export function ToolsPage({
 
             {filteredMcps.map((record) => {
               const def = mcpCatalog.find((item) => item.id === record.id);
+              const hasConflict = record.issues.length > 0;
+              const compactTarget = formatCompactPath(record.targetPath);
+              const subLine = hasConflict
+                ? `${compactTarget} · ${record.issues[0]}`
+                : record.secretKeys.length > 0
+                  ? `${compactTarget} · ${record.secretKeys.length} 项脱敏密钥`
+                  : compactTarget;
               return (
-                <article className="imported-plugin" key={`mcp:${record.toolId}:${record.id}`}>
-                  <div className="imported-plugin-row">
+                <article
+                  className={`tool-asset-row${hasConflict ? " has-conflict" : ""}`}
+                  key={`mcp:${record.toolId}:${record.id}`}
+                >
+                  <div className="tool-asset-main">
                     <IconTile size="sm">
                       <AssetGlyph kind={record.id === "feishu-mcp" ? "feishu" : "local_plugin"} size={18} />
                     </IconTile>
-                    <span className="badge badge--mcp">MCP</span>
-                    <strong>
-                      {record.title} · v{record.version}
-                    </strong>
-                    <span className="badge badge--muted">{TOOL_LABELS[record.toolId]}</span>
-                    <span className={`badge ${record.issues.length ? "badge--danger" : "badge--success"}`}>
-                      {record.issues.length ? "冲突·需处理" : "正常"}
-                    </span>
-                    {record.secretKeys.length > 0 && (
-                      <span className="badge badge--muted">{record.secretKeys.length} 项脱敏密钥</span>
-                    )}
+                    <div className="tool-asset-info">
+                      <div className="tool-asset-title-line">
+                        <span className="badge badge--mcp">MCP</span>
+                        <strong className="tool-asset-title">{record.title}</strong>
+                        <span className="tool-asset-version">v{record.version}</span>
+                        <span className="badge badge--muted">{def?.preset ? "官方预设" : "自定义"}</span>
+                        {selectedTool === "all" && (
+                          <span className="badge badge--muted">{TOOL_SHORT_LABELS[record.toolId]}</span>
+                        )}
+                      </div>
+                      <span
+                        className={`tool-asset-path${hasConflict ? " is-danger" : ""}`}
+                        title={hasConflict ? `${record.targetPath}\n${record.issues.join("\n")}` : record.targetPath}
+                      >
+                        {subLine}
+                      </span>
+                    </div>
                   </div>
-                  <span className="asset-destination">{record.targetPath}</span>
-                  {record.issues.map((issue) => (
-                    <p className="inline-issue" key={issue}>
-                      {issue}
-                    </p>
-                  ))}
-                  <div className="asset-actions">
-                    {def && def.envSchema.length > 0 && (
+                  <div className="tool-asset-actions">
+                    <span className={`badge ${hasConflict ? "badge--danger" : "badge--success"}`}>
+                      {hasConflict ? "冲突·需处理" : "正常"}
+                    </span>
+                    {def && def.envSchema.length > 0 && !hasConflict && (
                       <button
                         type="button"
-                        className="secondary-button"
-                        disabled={busy || !api || !!record.issues.length}
+                        className="secondary-button btn-compact"
+                        disabled={busy || !api}
                         onClick={() => {
                           setEditingMcp({ record, def });
                           setEditEnv(Object.fromEntries(def.envSchema.map((f) => [f.key, ""])));
                           setRevealedKeys({});
                         }}
                       >
-                        修改环境变量
+                        环境变量
                       </button>
                     )}
                     <button
                       type="button"
-                      className="secondary-button"
-                      disabled={busy || !api || !!record.issues.length}
+                      className="secondary-button btn-compact"
+                      disabled={busy || !api || hasConflict}
                       onClick={() => {
                         if (api) {
                           void run(async () => {
@@ -342,7 +559,7 @@ export function ToolsPage({
                 </article>
               );
             })}
-          </>
+          </div>
         )}
       </section>
 
@@ -356,6 +573,99 @@ export function ToolsPage({
         <div className="feedback-notice" role="status">
           <CheckCircle size={17} style={{ flex: "none" }} />
           <span>{notice}</span>
+        </div>
+      )}
+
+      {/* 接管旧版记录预览弹窗 (04-C) */}
+      {showLegacyModal && visibleLegacy.length > 0 && (
+        <div className="modal-backdrop">
+          <section className="modal legacy-modal" role="dialog" aria-modal="true" aria-label="接管旧版记录">
+            <header className="modal-header">
+              <div className="tools-list-header-left">
+                <h2>接管旧版记录</h2>
+                <span className="badge badge--warning">{visibleLegacy.length} 项待接管</span>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="关闭"
+                disabled={busy}
+                onClick={() => setShowLegacyModal(false)}
+              >
+                <X size={18} />
+              </button>
+            </header>
+            <div className="modal-body">
+              <div className="target-config-strip">
+                <span className="badge badge--success">只读安全</span>
+                <span>仅补写智枢本地回执，不修改目标工具目录中的已有文件</span>
+              </div>
+              <div className="tool-asset-list" style={{ marginTop: 12 }}>
+                {visibleLegacy.map((item) => (
+                  <article className="tool-asset-row" key={item.key}>
+                    <div className="tool-asset-main">
+                      <IconTile size="sm">
+                        <AssetGlyph kind={glyphForAsset(item.id, item.assetKind)} size={18} />
+                      </IconTile>
+                      <div className="tool-asset-info">
+                        <div className="tool-asset-title-line">
+                          <span className={`badge ${item.assetKind === "skill" ? "badge--brand" : "badge--enterprise"}`}>
+                            {item.assetKind === "skill" ? "技能" : "插件"}
+                          </span>
+                          <strong className="tool-asset-title">{item.title}</strong>
+                          <span className="tool-asset-version">v{item.version}</span>
+                          <span className="badge badge--muted">{TOOL_SHORT_LABELS[item.ideId]}</span>
+                        </div>
+                        <span
+                          className={`tool-asset-path${item.issues.length ? " is-danger" : ""}`}
+                          title={item.issues.length ? `${item.destination}\n${item.issues.join("\n")}` : item.destination}
+                        >
+                          {formatCompactPath(item.destination)}
+                          {item.issues.length > 0 ? ` · ${item.issues[0]}` : ""}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="tool-asset-actions">
+                      <span className={`badge ${item.kind === "legacy-receipt" ? "badge--brand" : "badge--warning"}`}>
+                        {item.originLabel}
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+            <footer className="modal-actions modal-actions--spread">
+              <span className="modal-footer-hint">接管后可在已安装清单中直接更新或卸载</span>
+              <div className="modal-actions-group">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => setShowLegacyModal(false)}
+                >
+                  返回
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={busy || !api?.adoptLegacyAssets}
+                  onClick={() => {
+                    if (api?.adoptLegacyAssets) {
+                      const keys = visibleLegacy.map((item) => item.key);
+                      void run(async () => {
+                        const result = await api.adoptLegacyAssets!(keys);
+                        await refreshAll(api);
+                        setShowLegacyModal(false);
+                        setNotice(`已接管 ${result.adoptedCount} 项旧版记录`);
+                      });
+                    }
+                  }}
+                >
+                  确认接管 ({visibleLegacy.length})
+                </button>
+              </div>
+            </footer>
+          </section>
         </div>
       )}
 

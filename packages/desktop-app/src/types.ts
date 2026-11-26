@@ -77,6 +77,25 @@ export interface InstalledAssetRecord {
   runtimeVerified: false;
 }
 
+export interface LegacyAssetCandidate {
+  key: string;
+  kind: "legacy-receipt" | "unmanaged-official";
+  assetKind: "skill" | "capability-plugin";
+  ideId: AssetIde;
+  id: string;
+  title: string;
+  version: string;
+  destination: string;
+  originLabel: string;
+  issues: string[];
+}
+
+export interface LegacyAdoptResult {
+  adoptedCount: number;
+  assets: InstalledAssetRecord[];
+  legacy: LegacyAssetCandidate[];
+}
+
 export interface UserAssetPlan {
   token: string;
   action: "install" | "update" | "uninstall";
@@ -96,6 +115,8 @@ export interface AssetsApi {
   importPluginSource(): Promise<PluginSource>;
   exportTraeWorkSkill(key: string): Promise<{ path: string; sha256?: string } | undefined>;
   listUserAssets(): Promise<InstalledAssetRecord[]>;
+  inspectLegacyAssets?(): Promise<LegacyAssetCandidate[]>;
+  adoptLegacyAssets?(keys?: string[]): Promise<LegacyAdoptResult>;
   previewUserAsset(action: UserAssetPlan["action"], key: string, ide: AssetIde, id?: string): Promise<UserAssetPlan>;
   applyUserAsset(token: string): Promise<InstalledAssetRecord[]>;
   inspectTools(): Promise<ToolInspection[]>;

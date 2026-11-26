@@ -1,3 +1,4 @@
+import { lstat, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -7,7 +8,16 @@ import {
 } from "../../../adapters/antigravity/user-assets.ts";
 import { CodexPluginHost, codexRunner, discoverCodexSkills, findCodexCli } from "../../../adapters/codex/user-assets.ts";
 import { traeWorkDelivery, traeWorkSkillRoot } from "../../../adapters/traework/user-assets.ts";
-import { UserAssetStore, readAssetFiles, type UserAssetDelivery, type UserAssetPreview, type UserAssetReceipt } from "../../core/src/user-assets.ts";
+import {
+  UserAssetStore,
+  assertAssetDirectory,
+  assetDigest,
+  assetFileHashes,
+  readAssetFiles,
+  type UserAssetDelivery,
+  type UserAssetPreview,
+  type UserAssetReceipt,
+} from "../../core/src/user-assets.ts";
 import type { PluginLibrary } from "./plugin-library.ts";
 
 export type UserAssetIde = "codex" | "antigravity" | "traework" | "generic";
@@ -17,9 +27,38 @@ export type InstalledUserAsset = UserAssetReceipt & {
   recognitionNote?: string;
   runtimeVerified: false;
 };
-type Options = { userHome?: string; codexHome?: string; host?: CodexPluginHost; findCli?: typeof findCodexCli };
+export interface LegacyAssetCandidate {
+  key: string;
+  kind: "legacy-receipt" | "unmanaged-official";
+  assetKind: "skill" | "capability-plugin";
+  ideId: UserAssetIde;
+  id: string;
+  title: string;
+  version: string;
+  destination: string;
+  originLabel: string;
+  issues: string[];
+}
+export interface LegacyAdoptResult {
+  adoptedCount: number;
+  assets: InstalledUserAsset[];
+  legacy: LegacyAssetCandidate[];
+}
+type ScannedLegacyRecord = { candidate: LegacyAssetCandidate; receipt: UserAssetReceipt };
+type Options = {
+  userHome?: string;
+  codexHome?: string;
+  host?: CodexPluginHost;
+  findCli?: typeof findCodexCli;
+  legacyReceiptDirs?: string[];
+};
 
 const SUPPORTED_IDES: readonly UserAssetIde[] = ["codex", "antigravity", "traework", "generic"];
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export class AssetOperations {
   private store: UserAssetStore;
@@ -55,6 +94,212 @@ export class AssetOperations {
     if (!binary) throw new Error("未找到支持插件安装的 Codex CLI；请安装或更新 Codex 后重试");
     this.host = new CodexPluginHost(codexRunner(binary, this.codexHome), this.codexHome);
     return this.host;
+  }
+
+  private resolveLegacyReceiptDirs(): string[] {
+    if (this.options.legacyReceiptDirs) return this.options.legacyReceiptDirs;
+    const userDataDir = path.dirname(this.stateRoot);
+    if (path.basename(userDataDir) === "智枢") {
+      return [path.join(path.dirname(userDataDir), "zhishu-desktop", "ide-assets", "receipts")];
+    }
+    return [];
+  }
+
+  private allowedRootsForIde(ideId: UserAssetIde): string[] {
+    const sharedSkillRoot = path.join(this.userHome, ".agents/skills");
+    if (ideId === "codex") return [sharedSkillRoot, path.join(this.stateRoot, "codex")];
+    if (ideId === "antigravity") return [antigravitySkillRoot(this.userHome), antigravityPluginRoot(this.userHome)];
+    if (ideId === "traework") return [traeWorkSkillRoot(this.userHome)];
+    return [sharedSkillRoot];
+  }
+
+  private isAllowedDestination(ideId: UserAssetIde, destination: string): boolean {
+    if (!path.isAbsolute(destination) || path.resolve(destination) !== destination) return false;
+    return this.allowedRootsForIde(ideId).some((root) => destination.startsWith(`${path.resolve(root)}${path.sep}`));
+  }
+
+  /** 严格只读扫描旧版回执目录与未纳管的官方预设插件，绝不修改任何磁盘文件。 */
+  private async scanLegacyRecords(): Promise<ScannedLegacyRecord[]> {
+    const existing = await this.store.list();
+    const existingKeys = new Set(existing.map((item) => `${item.target.ideId}:${item.id}`));
+    const found = new Map<string, ScannedLegacyRecord>();
+
+    // 1. 扫描旧版 userData（如 zhishu-desktop）遗留回执
+    for (const legacyDir of this.resolveLegacyReceiptDirs()) {
+      let entries: string[];
+      try {
+        const info = await lstat(legacyDir);
+        if (!info.isDirectory() || info.isSymbolicLink()) continue;
+        entries = await readdir(legacyDir);
+      } catch {
+        continue;
+      }
+      for (const entry of entries.sort()) {
+        const match = /^([a-z0-9-]+)--([a-z0-9-]+)\.json$/.exec(entry);
+        if (!match?.[1] || !match[2]) continue;
+        const ideId = match[1] as UserAssetIde;
+        const id = match[2];
+        if (!SUPPORTED_IDES.includes(ideId)) continue;
+        const key = `${ideId}:${id}`;
+        if (existingKeys.has(key) || found.has(key)) continue;
+        const filePath = path.join(legacyDir, entry);
+        try {
+          const stat = await lstat(filePath);
+          if (!stat.isFile() || stat.isSymbolicLink()) continue;
+          const raw: unknown = JSON.parse(await readFile(filePath, "utf8"));
+          if (
+            !isPlainObject(raw) ||
+            raw.id !== id ||
+            !isPlainObject(raw.target) ||
+            raw.target.ideId !== ideId ||
+            raw.target.scope !== "ide-user" ||
+            (raw.kind !== "skill" && raw.kind !== "capability-plugin") ||
+            typeof raw.title !== "string" ||
+            typeof raw.version !== "string" ||
+            typeof raw.destination !== "string" ||
+            typeof raw.sourceKey !== "string" ||
+            typeof raw.sourceDigest !== "string" ||
+            !isPlainObject(raw.managedFiles)
+          ) {
+            continue;
+          }
+          if (!this.isAllowedDestination(ideId, raw.destination)) continue;
+          const diskFiles = await readAssetFiles(raw.destination);
+          if (!diskFiles.size) continue;
+          const receipt = raw as unknown as UserAssetReceipt;
+          const issues = await this.store.validate(receipt);
+          found.set(key, {
+            receipt,
+            candidate: {
+              key,
+              kind: "legacy-receipt",
+              assetKind: receipt.kind,
+              ideId,
+              id: receipt.id,
+              title: receipt.title,
+              version: receipt.version,
+              destination: receipt.destination,
+              originLabel: "旧版回执",
+              issues,
+            },
+          });
+        } catch {
+          // 跳过损坏、超限或含符号链接的旧版回执文件，绝不阻塞正常页面加载。
+        }
+      }
+    }
+
+    // 2. 扫描 Antigravity 目录中未纳管的智枢官方预设插件（严格校验 author.name === "智枢官方" 且在官方预设名录中）
+    const agyPluginsRoot = antigravityPluginRoot(this.userHome);
+    try {
+      await assertAssetDirectory(agyPluginsRoot);
+      const rootInfo = await lstat(agyPluginsRoot);
+      if (rootInfo.isDirectory() && !rootInfo.isSymbolicLink()) {
+        const presetNames = new Set(
+          (await this.library.list())
+            .filter((item) => item.preset && item.kind === "capability-plugin")
+            .map((item) => item.name),
+        );
+        const dirs = await readdir(agyPluginsRoot, { withFileTypes: true });
+        for (const dir of dirs.sort((a, b) => a.name.localeCompare(b.name))) {
+          if (!dir.isDirectory() || dir.isSymbolicLink()) continue;
+          if (!/^zhishu-[a-z0-9-]+$/.test(dir.name) || !presetNames.has(dir.name)) continue;
+          const id = `plugin-${dir.name}`;
+          const key = `antigravity:${id}`;
+          if (existingKeys.has(key) || found.has(key)) continue;
+          const candidateDir = path.join(agyPluginsRoot, dir.name);
+          try {
+            const files = await readAssetFiles(candidateDir);
+            const manifestBytes = files.get("plugin.json");
+            if (!manifestBytes) continue;
+            const manifest: unknown = JSON.parse(manifestBytes.toString("utf8"));
+            if (!isPlainObject(manifest)) continue;
+            if (manifest.name !== dir.name) continue;
+            if (typeof manifest.version !== "string" || !SEMVER_PATTERN.test(manifest.version)) continue;
+            if (!isPlainObject(manifest.author) || manifest.author.name !== "智枢官方") continue;
+            const iface = isPlainObject(manifest.interface) ? manifest.interface : undefined;
+            const title =
+              (iface && typeof iface.displayName === "string" && iface.displayName.trim()) ||
+              (typeof manifest.displayName === "string" && manifest.displayName.trim()) ||
+              dir.name;
+            const managedFiles = assetFileHashes(files);
+            const managedModes =
+              process.platform === "win32"
+                ? undefined
+                : Object.fromEntries(
+                    [...files].map(([file, data]) => [
+                      file,
+                      (data as Buffer & { assetFileMode?: number }).assetFileMode ?? 0o644,
+                    ]),
+                  );
+            const receipt: UserAssetReceipt = {
+              id,
+              kind: "capability-plugin",
+              title,
+              version: manifest.version,
+              target: { ideId: "antigravity", scope: "ide-user" },
+              installedAt: new Date().toISOString(),
+              destination: candidateDir,
+              sourceKey: `${dir.name}@${manifest.version}`,
+              sourceDigest: assetDigest(JSON.stringify(Object.entries(managedFiles))),
+              managedFiles,
+              ...(managedModes ? { managedModes } : {}),
+            };
+            found.set(key, {
+              receipt,
+              candidate: {
+                key,
+                kind: "unmanaged-official",
+                assetKind: "capability-plugin",
+                ideId: "antigravity",
+                id,
+                title,
+                version: manifest.version,
+                destination: candidateDir,
+                originLabel: "未纳管官方插件",
+                issues: [],
+              },
+            });
+          } catch {
+            // 跳过不可读、损坏或含符号链接的插件目录。
+          }
+        }
+      }
+    } catch {
+      // 目标工具目录尚未创建或不可读时静默忽略。
+    }
+
+    return [...found.values()].sort((a, b) =>
+      a.candidate.ideId.localeCompare(b.candidate.ideId) || a.candidate.title.localeCompare(b.candidate.title),
+    );
+  }
+
+  async inspectLegacy(): Promise<LegacyAssetCandidate[]> {
+    return (await this.scanLegacyRecords()).map((entry) => entry.candidate);
+  }
+
+  async adoptLegacy(keys?: string[]): Promise<LegacyAdoptResult> {
+    return this.serialized(async () => {
+      const scanned = await this.scanLegacyRecords();
+      let selected: ScannedLegacyRecord[];
+      if (keys === undefined) {
+        selected = scanned;
+      } else {
+        const uniqueKeys = [...new Set(keys)];
+        const byKey = new Map(scanned.map((entry) => [entry.candidate.key, entry]));
+        selected = [];
+        for (const key of uniqueKeys) {
+          const hit = byKey.get(key);
+          if (!hit) throw new Error("所选旧版记录已失效或已被接管，请重新检查");
+          selected.push(hit);
+        }
+      }
+      for (const entry of selected) {
+        await this.store.adoptReceipt(entry.receipt);
+      }
+      const [assets, legacy] = await Promise.all([this.list(), this.inspectLegacy()]);
+      return { adoptedCount: selected.length, assets, legacy };
+    });
   }
 
   async list(): Promise<InstalledUserAsset[]> {

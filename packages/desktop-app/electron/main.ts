@@ -172,6 +172,13 @@ function registerHandlers(): void {
     return pluginLibrary.exportTraeWork(key, result.filePath);
   });
   guarded("assets:list", () => assetOperations.list());
+  guarded("assets:inspect-legacy", () => assetOperations.inspectLegacy());
+  guarded("assets:adopt-legacy", (keys?: unknown) => {
+    if (keys !== undefined && !isStringArray(keys)) {
+      throw new Error("旧版接管参数无效");
+    }
+    return assetOperations.adoptLegacy(keys);
+  });
   guarded("assets:preview", (action: unknown, key: unknown, ide: unknown, id?: unknown) => {
     if (typeof action !== "string" || typeof key !== "string" || typeof ide !== "string" || (id !== undefined && typeof id !== "string")) {
       throw new Error("资产预览参数无效");
@@ -569,7 +576,13 @@ if (!app.requestSingleInstanceLock()) {
       userHome: path.join(developmentProfile, "user-home"),
       codexHome: path.join(developmentProfile, "user-home/.codex"),
     } : {};
-    assetOperations = new AssetOperations(pluginLibrary, path.join(app.getPath("userData"), "ide-assets"), profilePaths);
+    assetOperations = new AssetOperations(
+      pluginLibrary,
+      path.join(app.getPath("userData"), "ide-assets"),
+      developmentProfile
+        ? { ...profilePaths, legacyReceiptDirs: [path.join(developmentProfile, "legacy-receipts")] }
+        : profilePaths,
+    );
     mcpOperations = new McpOperations(path.join(app.getPath("userData"), "mcp-assets"), profilePaths);
     toolInspector = new ToolInspector(profilePaths);
     sourceManager = new SourceManager(path.join(app.getPath("userData"), "sources"));

@@ -158,6 +158,25 @@ export class UserAssetStore {
       return process.platform !== "win32" && receipt.managedModes?.[file] !== undefined && fileMode(data) !== receipt.managedModes[file];
     }).map(([file]) => `受管文件缺失或被修改：${file}`);
   }
+  /** 仅在用户显式确认接管时补写本地受管回执；绝不修改目标目录文件，也绝不覆盖已有回执。 */
+  async adoptReceipt(receipt: UserAssetReceipt): Promise<UserAssetReceipt> {
+    assertUserAssetReceipt(receipt, receipt.target.ideId, receipt.id);
+    this.destination(receipt.target.ideId, receipt.destination);
+    const files = await readAssetFiles(receipt.destination);
+    if (!files.size) throw new Error("目标安装目录不存在或为空，无法接管");
+    await assertAssetDirectory(this.stateRoot);
+    await mkdir(this.stateRoot, { recursive: true });
+    const lock = path.join(this.stateRoot, ".operation-lock");
+    try { await mkdir(lock); } catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("另一个资产操作或中断操作尚未结束"); throw error; }
+    try {
+      const record = this.record(receipt.target.ideId, receipt.id);
+      if (await present(record)) throw new Error("此内容已有安装记录，拒绝覆盖");
+      await atomicText(record, `${JSON.stringify(receipt, null, 2)}\n`);
+      return receipt;
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+    }
+  }
   async preview(action: UserAssetPreview["action"], ideId: string, delivery: UserAssetDelivery): Promise<UserAssetPreview> {
     assertAssetManifest(delivery.manifest);
     if (!delivery.manifest.supportedIdes.includes(ideId)) throw new Error("内容不支持所选软件");

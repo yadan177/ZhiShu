@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("zhishu", {
   listUserAssets: () => ipcRenderer.invoke("assets:list"),
+  inspectLegacyAssets: () => ipcRenderer.invoke("assets:inspect-legacy"),
+  adoptLegacyAssets: (keys?: string[]) => ipcRenderer.invoke("assets:adopt-legacy", keys),
   previewUserAsset: (action: string, key: string, ide: string, id?: string) => ipcRenderer.invoke("assets:preview", action, key, ide, id),
   applyUserAsset: (token: string) => ipcRenderer.invoke("assets:apply", token),
   inspectTools: () => ipcRenderer.invoke("tools:inspect"),

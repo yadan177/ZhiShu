@@ -1,5 +1,18 @@
 # 变更记录
 
+## 2.1.1 (Desktop) - 2026-11-26
+
+### Added
+- **「AI 工具」旧版回执与未纳管官方插件显式接管（零静默写入）**：
+  - `@zhishu/core` 新增 `UserAssetStore.adoptReceipt()`（互斥锁 + 真实目录核验 + 拒绝覆盖已有回执 + `0o600` 原子写入，绝不修改目标插件目录）。
+  - 桌面端新增 `assets:inspect-legacy`（只读扫描旧版 `zhishu-desktop` 回执及 `~/.gemini/config/plugins/` 下满足 `author.name === "智枢官方"` 的未纳管官方 `zhishu-*` 插件，严格排除第三方插件、幽灵回执与符号链接）与 `assets:adopt-legacy` 受控 IPC，配套「接管旧版」提示条与「接管旧版记录」预览弹窗。
+  - 新增 [legacy-takeover.test.mjs](packages/desktop-app/tests/legacy-takeover.test.mjs) 自动化单元测试。
+
+### Changed
+- **按完整产研设计流程重构「04 · AI 工具」页面**（同步更新 PRD、产品结构图 XMind、架构设计、Figma `04 · AI 工具` / `04-C` 画板与前端实现）：
+  - 工具探测卡片补齐支持能力摘要与分类计数，列表头新增状态计数汇总（正常 / 可更新 / 需处理）与「查看全部」复位。
+  - 已安装清单重构为单行左信息 / 右操作紧凑横排与 `~/...` 精简路径，并按状态条件显隐操作控件（已是最新单版本隐藏版本下拉框与「更新」按钮；存在更高版本显「可更新至 vX.Y.Z」与主按钮「更新」；仅 `>= 2` 本地候选版本显紧凑自定义下拉框）。
+
 ## 2.1.0 - 2026-11-26
 
 ### Added
