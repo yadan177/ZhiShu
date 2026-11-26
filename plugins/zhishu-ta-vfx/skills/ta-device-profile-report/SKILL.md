@@ -3,7 +3,7 @@ name: ta-device-profile-report
 description: 用于整理与分析 Unity Profiler、Frame Debugger、RenderDoc、Snapdragon Profiler / OVR Metrics / PICO 性能监控工具采集的真机数据，定位 CPU/GPU/内存/发热瓶颈并输出标准化的跨岗位性能优化剖析报告。当项目需要性能摸底、里程碑真机剖析或排查掉帧发热时使用。
 metadata:
   title: 真机性能剖析与报告输出
-  version: "2.0.0"
+  version: "2.1.0"
   role: ta-vfx
   rulepacks:
     - common

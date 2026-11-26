@@ -3,7 +3,7 @@ name: pm-xr-blindspot-audit
 description: 用于评审 PRD、交互方案或产品原型中的需求漏洞，特别是 VR/MR/AR 空间计算产品的眩晕风险、硬件档位错配、追踪丢失、边界安全、音频舒适度与异常降级盲区。当用户需要需求评审把关、自查需求遗漏或审查 XR 体验风险时使用；不用于代码级 Bug 调试。
 metadata:
   title: 需求自检与 XR 盲区排查
-  version: "2.0.0"
+  version: "2.1.0"
   role: product-pm
   rulepacks:
     - common

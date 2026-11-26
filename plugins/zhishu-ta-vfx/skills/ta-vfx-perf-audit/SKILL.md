@@ -3,7 +3,7 @@ name: ta-vfx-perf-audit
 description: 用于全面体检 Unity 粒子特效（Shuriken ParticleSystem / VFX Graph）在移动 XR 一体机与实时 3D 场景中的 Overdraw、填充率、发射器数量、贴图尺寸、光照/碰撞开销及复用目录规范。当 TA 或特效师审查特效 Prefab、排查爆炸/烟雾掉帧或制定特效预算时使用；不用于业务网络脚本调试。
 metadata:
   title: 特效性能体检
-  version: "2.0.0"
+  version: "2.1.0"
   role: ta-vfx
   rulepacks:
     - common

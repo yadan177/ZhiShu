@@ -18,6 +18,27 @@ contextBridge.exposeInMainWorld("zhishu", {
   removeSource: (id: string) => ipcRenderer.invoke("sources:remove", id),
   testSource: (input: unknown) => ipcRenderer.invoke("sources:test", input),
   syncSource: (id: string) => ipcRenderer.invoke("sources:sync", id),
+  listEvolutionProposals: () => ipcRenderer.invoke("evolution:list"),
+  getEvolutionWatchSources: () => ipcRenderer.invoke("evolution:watch-sources"),
+  saveEvolutionWatchSources: (sources: unknown) => ipcRenderer.invoke("evolution:save-watch-sources", sources),
+  scanEvolutionOverrides: (workspaceRoot?: string) => ipcRenderer.invoke("evolution:scan-overrides", workspaceRoot),
+  watchEvolutionDocs: (options?: unknown) => ipcRenderer.invoke("evolution:watch-docs", options),
+  cancelEvolutionWatch: () => ipcRenderer.invoke("evolution:cancel-watch"),
+  importEvolutionProposal: (workspaceRoot?: string) => ipcRenderer.invoke("evolution:import-proposal", workspaceRoot),
+  recheckEvolutionProposal: (proposalId: string, targetSource: unknown) =>
+    ipcRenderer.invoke("evolution:recheck", proposalId, targetSource),
+  previewEvolutionProposal: (proposalId: string, targetSource: unknown, editedPatch?: unknown) =>
+    ipcRenderer.invoke("evolution:preview", proposalId, targetSource, editedPatch),
+  applyEvolutionProposal: (token: string) => ipcRenderer.invoke("evolution:apply", token),
+  rejectEvolutionProposal: (proposalId: string, reason?: string) =>
+    ipcRenderer.invoke("evolution:reject", proposalId, reason),
+  exportEvolutionPatch: (proposalId: string, targetSourceRoot?: string) =>
+    ipcRenderer.invoke("evolution:export-patch", proposalId, targetSourceRoot),
+  onEvolutionWatchProgress: (listener: (progress: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: unknown) => listener(progress);
+    ipcRenderer.on("evolution:watch-progress", handler);
+    return () => ipcRenderer.removeListener("evolution:watch-progress", handler);
+  },
   listPluginImports: () => ipcRenderer.invoke("plugins:list"),
   readPluginSkill: (key: string, skillSlug: string) => ipcRenderer.invoke("plugins:read-skill", key, skillSlug),
   inspectPluginSource: () => ipcRenderer.invoke("plugins:inspect"),

@@ -114,7 +114,163 @@ export interface AssetsApi {
 
 export type PlatformChoice = "codex" | "antigravity" | "trae" | "qoder" | "cursor" | "workbuddy";
 export type RuleMode = "install" | "update" | "uninstall";
-export type ActiveView = "projects" | "rules" | "assets" | "tools" | "sources";
+export type ActiveView = "projects" | "rules" | "assets" | "tools" | "sources" | "evolution";
+
+export type EvolutionChannel = "session-capture" | "overrides-promotion" | "docs-watch";
+export type EvolutionTargetKind = "rule" | "skill";
+export type EvolutionOperation = "add-item" | "update-item" | "deprecate-item";
+export type EvolutionStatus = "pending" | "conflict" | "stale" | "approved" | "rejected" | "archived";
+
+export interface EvolutionEvidence {
+  sourceLabel: string;
+  summary: string;
+  url?: string;
+  verifiedAt?: string;
+  projectNames?: string[];
+}
+
+export interface EvolutionAppliedReceipt {
+  sourceId: string;
+  sourceName: string;
+  targetFilePath: string;
+  appliedAt: string;
+  beforeDigest: string;
+  afterDigest: string;
+  validated: boolean;
+}
+
+export interface EvolutionProposal {
+  schemaVersion: 1;
+  id: string;
+  channel: EvolutionChannel;
+  targetKind: EvolutionTargetKind;
+  operation: EvolutionOperation;
+  status: EvolutionStatus;
+  title: string;
+  summary?: string;
+  targetRulepack?: string;
+  targetPath: string;
+  anchorHeading: string;
+  beforeSnippet?: string;
+  afterSnippet?: string;
+  evidence: EvolutionEvidence[];
+  fingerprint: string;
+  targetBaseDigest?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastCheckedAt?: string;
+  rejectionReason?: string;
+  conflictMessages?: string[];
+  appliedReceipt?: EvolutionAppliedReceipt;
+}
+
+export interface EvolutionCounts {
+  badge: number;
+  pendingTab: number;
+  conflictTab: number;
+  processedTab: number;
+  total: number;
+}
+
+export interface EvolutionListResult {
+  proposals: EvolutionProposal[];
+  counts: EvolutionCounts;
+}
+
+export interface WatchSourceConfig {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  url: string;
+  targetRulepack: string;
+  targetPath: string;
+  anchorHeading?: string;
+  keywords: string[];
+  enabled: boolean;
+  lastCheckedAt?: string;
+  lastStatus?: "ok" | "error";
+  lastMessage?: string;
+}
+
+export interface EvolutionTargetSource {
+  id: string;
+  name: string;
+  root?: string;
+  readonly?: boolean;
+}
+
+export interface SimilarRuleMatch {
+  lineNumber: number;
+  text: string;
+  similarity: number;
+}
+
+export interface EvolutionPatchEdit {
+  anchorHeading?: string;
+  beforeSnippet?: string;
+  afterSnippet?: string;
+}
+
+export interface EvolutionPreview {
+  token: string;
+  proposalId: string;
+  title: string;
+  channel: EvolutionChannel;
+  targetKind: EvolutionTargetKind;
+  operation: EvolutionOperation;
+  targetSource: EvolutionTargetSource;
+  targetPath: string;
+  targetFilePath: string;
+  anchorHeading: string;
+  beforeSnippet?: string;
+  afterSnippet?: string;
+  beforeContent: string;
+  afterContent: string;
+  beforeDigest: string;
+  afterDigest: string;
+  lineCountBefore: number;
+  lineCountAfter: number;
+  lineBudget: number;
+  overBudget: boolean;
+  similarItems: SimilarRuleMatch[];
+  conflicts: string[];
+  validationChecks: string[];
+}
+
+export interface EvolutionWatchProgress {
+  completed: number;
+  total: number;
+  currentSourceName: string;
+}
+
+export interface EvolutionScanSummary {
+  scannedCount: number;
+  skippedProjects: { root: string; reason: string }[];
+  createdCount: number;
+  foldedCount: number;
+  list: EvolutionListResult;
+}
+
+export interface DocsWatchSourceResult {
+  sourceId: string;
+  sourceName: string;
+  url: string;
+  status: "ok" | "error" | "cancelled";
+  hasDiff: boolean;
+  message: string;
+}
+
+export interface EvolutionWatchSummary {
+  checkedCount: number;
+  succeededCount: number;
+  failedCount: number;
+  cancelled: boolean;
+  createdCount: number;
+  foldedCount: number;
+  results: DocsWatchSourceResult[];
+  watchSources: WatchSourceConfig[];
+  list: EvolutionListResult;
+}
 
 export type RuleSourceChoice =
   | { type: "github"; repository?: string }
@@ -295,6 +451,36 @@ export type DesktopApi = AssetsApi & {
   removeSource(id: string): Promise<AssetSourceRecord[]>;
   testSource(input: TestSourceInput): Promise<SourceTestResult>;
   syncSource(id: string): Promise<{ sources: AssetSourceRecord[]; message: string }>;
+  listEvolutionProposals(): Promise<EvolutionListResult>;
+  getEvolutionWatchSources(): Promise<WatchSourceConfig[]>;
+  saveEvolutionWatchSources(sources: WatchSourceConfig[]): Promise<WatchSourceConfig[]>;
+  scanEvolutionOverrides(workspaceRoot?: string): Promise<EvolutionScanSummary>;
+  watchEvolutionDocs(options?: { sourceIds?: string[]; workspaceRoot?: string }): Promise<EvolutionWatchSummary>;
+  cancelEvolutionWatch(): Promise<{ cancelled: boolean }>;
+  importEvolutionProposal(
+    workspaceRoot?: string,
+  ): Promise<{ outcome: "created" | "duplicate" | "previously-rejected"; proposal?: EvolutionProposal; list: EvolutionListResult } | undefined>;
+  recheckEvolutionProposal(
+    proposalId: string,
+    targetSource: EvolutionTargetSource,
+  ): Promise<{ proposal: EvolutionProposal; conflicts: string[]; list: EvolutionListResult }>;
+  previewEvolutionProposal(
+    proposalId: string,
+    targetSource: EvolutionTargetSource,
+    editedPatch?: EvolutionPatchEdit,
+  ): Promise<EvolutionPreview>;
+  applyEvolutionProposal(
+    token: string,
+  ): Promise<{ proposal: EvolutionProposal; receipt: EvolutionAppliedReceipt; list: EvolutionListResult }>;
+  rejectEvolutionProposal(
+    proposalId: string,
+    reason?: string,
+  ): Promise<{ proposal: EvolutionProposal; list: EvolutionListResult }>;
+  exportEvolutionPatch(
+    proposalId: string,
+    targetSourceRoot?: string,
+  ): Promise<{ path: string; sha256: string } | undefined>;
+  onEvolutionWatchProgress(listener: (progress: EvolutionWatchProgress) => void): () => void;
   chooseProject(): Promise<ProjectStatus | undefined>;
   listProjects(): Promise<RegisteredProject[]>;
   selectProject(root: string): Promise<ProjectStatus>;

@@ -3,7 +3,7 @@ name: fs-ui-component-audit
 description: 用于走查 Web 或 Electron 桌面前端组件（React / Vue / CSS）的语义令牌使用、响应式与极值状态、无障碍键盘交互、渲染性能、控件合规性及代码与视觉规范一致性。当研发完成前端页面或通用组件需要自检样式与交互质量时使用；不用于后端接口调试。
 metadata:
   title: 组件与页面样式走查
-  version: "2.0.0"
+  version: "2.1.0"
   role: fullstack-dev
   rulepacks:
     - common

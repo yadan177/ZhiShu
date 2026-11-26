@@ -1,29 +1,16 @@
-# 智枢桌面版
+# 智枢桌面版（ZhiShu Desktop）
 
-本次桌面版本是 [2.0.0](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.0.0)，全面更名为**智枢（ZhiShu）**并升级为左侧 4 模块架构（「我的项目 / 项目规则」「插件与技能」「AI 工具」「来源管理」），内置 6 大官方岗位插件（42 个 Skills）、飞书与自定义 MCP 脱敏配置、三级来源治理与全应用系统默认无衬线字体（macOS 苹方 / Windows 微软雅黑）。Mac 和 Windows 均在启动时检查新版，发现后显示提示并由用户下载手动安装；规则包与 CLI 同步发布 `v2.0.0`。
+当前版本为 **`2.1.0`**（[desktop-v2.1.0](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.1.0)），与规则包 / CLI / 岗位插件 `v2.1.0` 双轨同步发布。采用左侧 5 模块架构（「我的项目 / 项目规则」「插件与技能」「AI 工具」「来源管理」「规则进化」），内置 6 大官方岗位插件（共 43 个 Skills）、飞书与自定义 MCP 脱敏配置、三级来源治理与三通道规则自动进化审批工作台。全应用界面文字采用操作系统默认无衬线字体（macOS 苹方 / Windows 微软雅黑），仅在代码与 Diff 预览框保留系统等宽字体。
 
-桌面版 1.1.0 面向 macOS 和 Windows，提供安装、更新和卸载项目规则。选择项目文件夹后，安装时选 Unity、JS + TS、Java、Go 或 Python，并可多选 Codex、Qoder、Cursor、WorkBuddy。一次安装会包括该技术栈的开发规则及对应文档规则；所选平台共用 `.agent-rules/` 和 `AGENTS.md`，不会复制多套正文。Qoder、Cursor、WorkBuddy 的真实客户端加载仍待验收。
+## 核心能力
 
-1.2.1 将“我的项目”“项目规则”“插件与技能”分为三个独立页面，默认打开“我的项目”。添加项目后保留在列表，点击“管理规则”进入对应项目的规则操作。界面删除段落式说明，仅显示操作、状态、必要错误和变更内容。
+- **我的项目 & 项目规则**：维护独立的个人项目清单；支持从智枢官方源、企业/个人本地目录源与私有 Git 源自由组合 20 个规则包，并为 OpenAI Codex、Antigravity、TRAE、Qoder、Cursor、WorkBuddy 生成共享的 `.agent-rules/` 与 `AGENTS.md` 受控入口（所有下拉统一使用自定义 `Dropdown` 组件）；安装、更新、中断事务恢复与卸载均先展示逐文件变更预览，绝不静默覆盖 `.agent-rules/overrides.md` 或未知文件。
+- **插件与技能 & AI 工具**：内置 6 大官方岗位插件（43 个 Skills），支持导入本机插件/Skill 快照与配置飞书/自定义 MCP（密钥仅存本机配置且预览脱敏），按需预览同步到 Antigravity、OpenAI Codex、TRAE / TraeWork（实验）与通用目录（`~/.agents/skills`）；「AI 工具」页统一盘点本机已装资产与探测状态。详见 [用户环境资产安装机制](../../项目文档/技术文档/用户环境资产安装机制.md)。
+- **来源管理**：按「企业源 > 个人源 > 内置只读官方源」三级治理，支持本地目录源与私有 Git 源连接测试、浅克隆同步、`0o600` 本机凭据隔离与企业必选规则包锁定。
+- **规则进化**：收拢对话现场捕获（`fs-evolution-capture` / `zhishu evolve capture` / JSON 导入）、跨项目只读 `overrides.md` 共性升格与外部官方文档 HTTPS 巡检三条通道；右侧审阅抽屉支持核对证据、切换可写目标源、编辑原子补丁与导出 `.patch`，点击「查看变更 → 确认写入」前强制拦截只读源、基线漂移与敏感明文，写入后自动执行门禁校验，失败完整回滚。
+- **单实例与版本提醒**：桌面端保持单实例运行并在启动时检查 `desktop-v*` Release，发现新版后引导手动下载安装（macOS Apple Silicon DMG / Windows x64 EXE）。
 
-1.2.2 的“项目规则”通过自定义下拉框选择“我的项目”中登记的项目；项目添加和移出列表在“我的项目”操作。项目选项显示名称和完整路径，路径不可用时禁止选择。“安装到”和“更新来源”也使用同一个下拉组件，支持方向键、首尾定位、输入名称定位、确认与取消。
-
-1.2.0 增加了独立项目列表：智枢把项目路径保存在个人应用数据目录中；选择已有项目时只读取它的规则状态，不重新初始化或改写项目。列表中的「移出列表」仅删除智枢记录，项目规则继续保留。“插件与技能”模块支持导入本机插件或独立 Skill，选择 Codex／TraeWork 后预览安装，并查看已安装内容、预览更新和卸载。具体兼容范围与边界见 [用户环境资产安装机制](../../项目文档/技术文档/用户环境资产安装机制.md)。TraeWork 本地 Skill 标为实验支持，客户端识别和真实任务仍待验收。
-桌面应用只保留一个运行实例，避免两个窗口进程同时修改项目列表造成记录丢失。
-
-## Product Design 迁移实验
-
-“插件与技能”页点击「导入」，选择本机插件缓存中的包根目录，检查来源与许可后确认。完整源包只复制到应用个人数据目录 `plugin-imports/<name>@<version>/source/`；`import.json` 保存来源与文件哈希。导入不执行源脚本，不覆盖已有版本，导出前重新核对快照完整性。
-
-当前仅为 Product Design `0.1.56` 提供 TraeWork 适配。点击「导出 TraeWork 技能包」生成根级 `SKILL.md` 的 ZIP，再在 TraeWork「插件市场 → 技能 → 上传技能」安装。TraeWork 识别一个入口 Skill，按任务读取保留的 10 个源 Skills；导出不等于安装或验证完成。MCP/Hook 等声明不能被静默忽略；其他包可保存来源，暂不提供交付。原包为专有许可，本次不将原文放入公开仓库。完整边界见 [用户环境资产安装机制](../../项目文档/技术文档/用户环境资产安装机制.md)。
-
-[下载桌面版 2.0.0](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.0.0)：macOS Apple Silicon 使用 DMG，Windows x64 使用 EXE。
-
-安装和卸载都会先显示文件预览，再由用户点击确认。更新已有规则时，选择已安装项目，也可直接调整所选平台；点击「检查更新」后，若有规则新版本或平台选择变化，再点击「查看变更」，逐文件审查并确认更新。检查更新只读取 GitHub Release 信息；查看变更才下载规则包并校验摘要。更新与卸载都会保留 `.agent-rules/overrides.md` 和其他项目自有文件。若文件已漂移、配置变化或存在冲突，应用会停止写入。
-
-`1.1.0` 新增软件自身更新提醒：每次启动后检查 `desktop-v*` Release；只有发现新版时才在顶部显示提示。点击提示会在浏览器打开对应平台的安装包下载地址，下载后由用户手动安装。它不改项目规则、CLI 或个人 Codex 中的旧插件副本。`1.0.0` 没有软件更新提醒，升级到 `1.1.0` 需自行下载并安装。Windows 应用内自动安装仍需签名与跨版本验收。
-
-## 开发和打包
+## 开发与打包
 
 在仓库根目录运行：
 
@@ -35,8 +22,6 @@ npm run pack:mac --workspace zhishu-desktop
 npm run pack:win --workspace zhishu-desktop
 ```
 
-本机构建输出 `release/ZhiShu-Desktop-2.0.0-macOS-arm64.dmg`，或 `release/ZhiShu-Desktop-2.0.0-Windows-x64.exe`。在对应操作系统上构建；GitHub Actions 的 `发布桌面应用` 工作流分别使用 macOS 与 Windows 运行器。本次发布只有 DMG 和 EXE，没有 Windows 自动更新清单。Mac DMG 不签名、不公证，用户首次打开时可能需要在系统「隐私与安全性」中允许打开；Windows EXE 未签名，系统可能显示未知发布者提示。桌面应用本身不会卸载电脑上的 CLI 或个人 Codex 中的旧插件副本。
+本机构建输出 `release/ZhiShu-Desktop-2.1.0-macOS-arm64.dmg` 或 `release/ZhiShu-Desktop-2.1.0-Windows-x64.exe`。开发期可通过 `ZHISHU_DEV_PROFILE=/tmp/zhishu-dev npm run dev --workspace zhishu-desktop` 在隔离数据目录验证而不影响本机正式配置。
 
-## 已完成的本机验证
-
-在一个已有本地覆盖规则的 Unity 测试工程中，通过打包后的 `.app` 预览并安装 Unity + Codex 规则，CLI `validate` 通过；随后在同一应用内预览并卸载。卸载后，项目 Git 状态、保留文件和原有改动均与测试前一致。1.1.0 的 Mac 和 Windows CI 已完成代码检查与安装包构建；Windows 真实桌面交互及本版跨版本更新提醒仍待验收。其他客户端的规则加载也仍待验收。
+当前安装包尚未配置代码签名与 macOS 公证，首次打开时系统可能提示安全确认；桌面应用本身不会卸载电脑上的 CLI 或个人环境中的旧插件副本。Windows 实机交互、TraeWork 本地技能识别与 Qoder / Cursor / WorkBuddy 规则客户端加载仍待持续实测验收。

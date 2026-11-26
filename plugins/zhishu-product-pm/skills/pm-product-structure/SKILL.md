@@ -3,7 +3,7 @@ name: pm-product-structure
 description: 用于梳理和生成清晰的产品结构图、功能架构图、信息架构层级与页面模块树。当用户要求画产品结构图、整理系统功能模块、拆分一级/二级页面或导出 XMind/Mermaid 结构时使用；不用于绘制详细业务时序图或代码类图。
 metadata:
   title: 产品结构图生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: product-pm
   rulepacks:
     - common

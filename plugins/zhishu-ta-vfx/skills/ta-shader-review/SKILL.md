@@ -3,7 +3,7 @@ name: ta-shader-review
 description: 用于审查与优化 Unity HLSL / ShaderLab / Shader Graph 代码，重点排查 URP 兼容性、Single Pass Instanced 立体渲染宏缺失、半精度（half）优化、指令与采样开销及 Shader 关键字变体爆炸风险。当用户编写、重构或排障 Shader 及 Shader Graph 时使用；不用于普通 C# 业务逻辑审查。
 metadata:
   title: Shader 代码审查与优化
-  version: "2.0.0"
+  version: "2.1.0"
   role: ta-vfx
   rulepacks:
     - common

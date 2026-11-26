@@ -13,21 +13,21 @@
 
 ## 当前状态
 
-规则包、CLI 与官方岗位插件当前版本为 `2.0.0`（标签 `v2.0.0`）；桌面应用版本为 `2.0.0`（标签 `desktop-v2.0.0`）。当前代码包含：
+规则包、CLI 与官方岗位插件当前版本为 `2.1.0`（标签 `v2.1.0`）；桌面应用版本为 `2.1.0`（标签 `desktop-v2.1.0`）。当前代码包含：
 
-- 基于证据检测技术栈与多岗位规则包组合的 TypeScript 核心包（`@zhishu/core`）。
-- 支持 `detect`、`init`（含 `--rulepacks` 与 6 平台 `--targets`）、`validate`、`check`、`diff`、`update`、`recover` 和 `uninstall` 的 `zhishu` CLI。
+- 基于证据检测技术栈、多岗位规则包组合与规则自动进化引擎的 TypeScript 核心包（`@zhishu/core`）。
+- 支持 `detect`、`init`（含 `--rulepacks` 与 6 平台 `--targets`）、`validate`、`check`、`diff`、`update`、`recover`、`uninstall` 和 `evolve`（`capture` / `list` / `scan-overrides` / `preview` / `apply --apply` / `reject` / `export`）的 `zhishu` CLI。
 - 管理共享 `AGENTS.md` 受控区块的 Codex、Antigravity、TRAE、Qoder、Cursor 和 WorkBuddy 项目入口（其中 Qoder、Cursor、WorkBuddy 的实际客户端加载仍待验收）。
-- 智枢 2.0 桌面端（左侧 4 模块：「我的项目 / 项目规则」「插件与技能」「AI 工具」「来源管理」），支持多项目登记、多岗位规则组合、中断事务恢复、独立 MCP 脱敏配置与企业/个人/官方三级来源治理。
+- 智枢桌面端（左侧 5 模块：「我的项目 / 项目规则」「插件与技能」「AI 工具」「来源管理」「规则进化」），支持多项目登记、多岗位规则组合、中断事务恢复、独立 MCP 脱敏配置、企业/个人/官方三级来源治理，以及三通道规则自动进化与人工 Diff 审批落盘。
 - 本机插件/Skill 只读快照导入与跨工具用户环境同步（Antigravity、OpenAI Codex、TraeWork 与通用目录 `~/.agents/skills`）；Product Design 0.1.56 可适配为 TraeWork Skill 包。详见 [用户环境资产安装机制](项目文档/技术文档/用户环境资产安装机制.md)。
-- 规则包、项目配置、锁文件、资产、MCP、来源与适配器 7 套 JSON Schema。
-- 20 个规则包、158 份规则文档（含跨设备 XR 空间 UI 布局规范与 Unity XR 空间 UI 实现规则），以及 `plugins/` 下 6 大官方岗位插件（共 42 个 Skills：产品经理、UI 设计师、三维设计师、技术美术 TA、Unity 开发工程师、全栈开发工程师）；UI 规则说明见 [UI 设计规则说明](项目文档/技术文档/UI设计规则说明.md)。
+- 规则包、项目配置、锁文件、资产、进化提案、MCP、来源与适配器 8 套 JSON Schema。
+- 20 个规则包、158 份规则文档（含跨设备 XR 空间 UI 布局规范与 Unity XR 空间 UI 实现规则），以及 `plugins/` 下 6 大官方岗位插件（共 43 个 Skills：产品经理、UI 设计师、三维设计师、技术美术 TA、Unity 开发工程师、全栈开发工程师，含对话现场规则进化捕获 `fs-evolution-capture`）；UI 规则说明见 [UI 设计规则说明](项目文档/技术文档/UI设计规则说明.md)。
 - 在 `adapters/` 维护平台入口资料；规则正文仍只在 `rulepacks/`。
 - 将规则真实安装到业务工程，预览差异后再应用更新；发生受管文件漂移或未知文件碰撞时拒绝覆盖。
 - GitHub Release 规则包下载与 SHA-256 验证，以及跨文件一致性自动化总门禁（`npm run check`）。
 - macOS Apple Silicon 与 Windows x64 桌面安装包，可选择项目、规则包组合与目标平台，预览后安装、更新或卸载规则；Windows 安装包由 GitHub Actions 构建，真实桌面交互仍待持续验收。
 
-GitHub 仓库已公开；[桌面版 `2.0.0`](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.0.0) 与 [`v2.0.0` 规则包 Release](https://github.com/yadan177/ZhiShu/releases/tag/v2.0.0) 通过双轨标签自动构建发布（历史旧版 `v0.1.5` 与 `desktop-v1.2.2` 保留可查）。Qoder、Cursor、WorkBuddy 的实际客户端加载、Windows 实机交互及 Codex 桌面端 Hook 调度仍待验收。
+GitHub 仓库已公开；[桌面版 `2.1.0`](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.1.0) 与 [`v2.1.0` 规则包 Release](https://github.com/yadan177/ZhiShu/releases/tag/v2.1.0) 通过双轨标签自动构建发布（历史版本保留于 GitHub Releases 与 [CHANGELOG.md](CHANGELOG.md)）。Qoder、Cursor、WorkBuddy 的实际客户端加载、Windows 实机交互及 Codex 桌面端 Hook 调度仍待验收。
 
 ## 业务项目如何使用
 
@@ -42,13 +42,13 @@ zhishu validate /absolute/path/to/project
 
 `init` 只在没有 `agent-rules.yaml` 的项目执行。它检测技术栈，从官方 GitHub Release 下载并校验规则包；已有 `AGENTS.md` 的非受管内容会保留。完整步骤见 [安装与更新指南](项目文档/技术文档/安装与更新指南.md)。
 
-桌面版 `2.0.0` 先在「我的项目」添加项目，再到「项目规则」通过自定义下拉框选择项目，支持按岗位自由组合 20 个规则包并多选 OpenAI Codex、Antigravity、TRAE、Qoder、Cursor、WorkBuddy。所有所选平台共用项目中的一套 `.agent-rules/` 规则和一个 `AGENTS.md` 受控入口。CLI 同样支持 `--targets` 与 `--rulepacks` 参数。
+桌面版 `2.1.0` 先在「我的项目」添加项目，再到「项目规则」通过自定义下拉框选择项目，支持按岗位自由组合 20 个规则包并多选 OpenAI Codex、Antigravity、TRAE、Qoder、Cursor、WorkBuddy。所有所选平台共用项目中的一套 `.agent-rules/` 规则和一个 `AGENTS.md` 受控入口；同时可在「规则进化」审阅三通道进化提案并原子写入可写规则源。CLI 同样支持 `--targets`、`--rulepacks` 与 `evolve` 命令。
 
 更新分成三步：`check` 发现新版本，`diff` 展示变更供人审查，`update --apply` 才修改项目文件。桌面版通过「安装规则 / 查看变更 → 确认应用」完成审查写入；项目本地覆盖规则和未知文件受保护。
 
 不再使用时，先运行 `zhishu uninstall /absolute/path/to/project` 查看卸载摘要；如需逐行差异，加 `--details`。审查后运行 `zhishu uninstall /absolute/path/to/project --apply` 卸载项目规则；项目本地文件会保留。
 
-图形界面安装包见 [桌面版 `2.0.0` Release](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.0.0)，源码和构建方式见 [桌面版说明](packages/desktop-app/README.md)。两个平台均需手动安装；安装包尚未签名，Mac 包尚未公证。
+图形界面安装包见 [桌面版 `2.1.0` Release](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.1.0)，源码和构建方式见 [桌面版说明](packages/desktop-app/README.md)。两个平台均需手动安装；安装包尚未签名，Mac 包尚未公证。
 
 ## 规则来源
 

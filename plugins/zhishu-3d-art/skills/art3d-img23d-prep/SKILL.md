@@ -3,7 +3,7 @@ name: art3d-img23d-prep
 description: 用于在进入 Tripo、混元 3D、Hyper3D 等图生 3D 工具前，制定高质量输入参考图规范（去阴影、正交多视角、纯净背景、结构清晰）与精准生图/生模提示词，避免生成粘连、缺面和烘焙光影污染。当用户准备用 AI 生成 3D 粗模或排查图生 3D 质量差原因时使用；不用于手工编写着色器或引擎脚本。
 metadata:
   title: 图生 3D 提示词与参考图准备
-  version: "2.0.0"
+  version: "2.1.0"
   role: 3d-art
   rulepacks:
     - common

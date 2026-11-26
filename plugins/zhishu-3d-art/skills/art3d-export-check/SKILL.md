@@ -3,7 +3,7 @@ name: art3d-export-check
 description: 用于在 Blender、Maya 或 3ds Max 导出 FBX / glTF / GLB 进入 Unity/XR 工程前，系统校验坐标系轴向、米制比例、缩放冻结、Pivot 轴心、层级命名、材质槽剥离及多余灯光摄像机清理。当三维美术准备导出资产交付给引擎或排查模型导入后旋转 90 度/比例不对/材质丢失问题时使用。
 metadata:
   title: FBX / glTF 导出校验
-  version: "2.0.0"
+  version: "2.1.0"
   role: 3d-art
   rulepacks:
     - common

@@ -93,4 +93,13 @@ await Promise.all([
     target: "node22",
     external: ["tar", "yaml"],
   }),
+  build({
+    entryPoints: ["electron/evolution-operations.ts"],
+    outfile: "build/evolution-operations.cjs",
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node22",
+    external: ["tar", "yaml"],
+  }),
 ]);

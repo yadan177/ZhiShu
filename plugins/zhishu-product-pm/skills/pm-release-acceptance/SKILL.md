@@ -3,7 +3,7 @@ name: pm-release-acceptance
 description: 用于根据 PRD、需求变更与版本目标生成结构化的版本验收清单、冒烟用例与发版准出评估表，涵盖功能闭环、边界异常、跨端兼容及 XR 真机体验准出项。当用户准备提测验收、里程碑评审或封板发版前检查时使用；不用于替代研发单元测试代码编写。
 metadata:
   title: 版本验收清单生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: product-pm
   rulepacks:
     - common

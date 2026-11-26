@@ -3,7 +3,7 @@ name: unity-arch-sequence-diagram
 description: 用于基于真实 Unity / XR 工程源码或技术方案，绘制清晰分层的 Unity 系统架构图（模块分层、程序集依赖、渲染/资源/SDK 边界）与核心运行时时序图（启动引导、场景与资源异步加载、XR 交互、网络同步与断线重连）。当 Unity 研发做技术方案评审、双端联调对齐或梳理复杂异步链路时使用；不用于画产品业务泳道图。
 metadata:
   title: Unity 架构与时序图生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common

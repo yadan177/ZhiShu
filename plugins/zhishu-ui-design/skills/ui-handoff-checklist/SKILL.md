@@ -3,7 +3,7 @@ name: ui-handoff-checklist
 description: 用于设计定稿后的全量走查、切图与图标资产导出核对（矢量 SVG / 位图倍率 / 9-Slice / 平台图标安全区）、设计令牌同步以及面向研发的设计交付说明撰写。当设计师准备将设计稿移交前端、桌面端或 Unity 研发实现时使用；不用于替代研发代码编写。
 metadata:
   title: 设计稿走查与研发交付
-  version: "2.0.0"
+  version: "2.1.0"
   role: ui-design
   rulepacks:
     - common

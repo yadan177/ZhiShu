@@ -1,7 +1,7 @@
 {
   "name": "zhishu-unity-dev",
   "displayName": "Unity 开发工程师",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "面向 Unity 与 PICO/XR 项目的 C# 代码规范审查、XR 真机性能排障、场景与预制体诊断、打包发布前检查、测试脚本编写与技术文档同步技能套件。",
   "author": {
     "name": "智枢官方"

@@ -1,7 +1,7 @@
 {
   "$schema": "../../schemas/rulepack.schema.json",
   "id": "ui-design",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "status": "ready",
   "kind": "common",
   "entry": "15-AI通用入口规则.md",

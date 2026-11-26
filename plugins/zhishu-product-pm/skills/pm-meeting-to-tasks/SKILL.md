@@ -3,7 +3,7 @@ name: pm-meeting-to-tasks
 description: 用于将会议纪要、语音转写逐字稿、群聊讨论记录或评审反馈整理为结构化决策日志、分岗位待办任务清单与风险跟踪表。当用户需要整理会议结论、拆分跟进事项、同步飞书待办/多维表格或沉淀评审纪要时使用；不用于凭空补全会议未提及的决策。
 metadata:
   title: 会议纪要转待办
-  version: "2.0.0"
+  version: "2.1.0"
   role: product-pm
   rulepacks:
     - common

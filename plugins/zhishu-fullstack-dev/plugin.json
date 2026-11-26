@@ -1,7 +1,7 @@
 {
   "name": "zhishu-fullstack-dev",
   "displayName": "全栈开发工程师",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "面向 JS/TS、Go、Java、Python 全栈及 WebXR/visionOS 跨端空间工程的代码审查、跨端接口契约核对、组件与空间 UI 实现走查、数据库迁移检查、自动化测试生成与技术文档/变更日志同步技能套件。",
   "author": {
     "name": "智枢官方"

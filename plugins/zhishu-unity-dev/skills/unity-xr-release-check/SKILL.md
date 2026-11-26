@@ -3,7 +3,7 @@ name: unity-xr-release-check
 description: 用于在构建 PICO、Quest、OpenXR 或 Android/PCVR 正式发布包（APK / AAB / 可执行包）前执行全量发布门禁核查，覆盖双轨版本号/构建号、Android 签名 Keystore、包名与权限最小化、SDK 与渲染配置、调试开关剥离、音频与 XR 合规项。当 Unity/XR 项目进入封板出包或提审前检查时使用。
 metadata:
   title: PICO / XR 打包发布前检查
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common

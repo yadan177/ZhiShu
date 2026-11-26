@@ -3,7 +3,7 @@ name: ta-render-material-check
 description: 用于检查 Unity URP 渲染管线配置、光照烘焙策略、阴影与后处理预算、材质球合批（SRP Batcher / GPU Instancing / Static Batching）及透明队列排序问题。当项目出现 DrawCall/SetPass 暴涨、合批失效、画面发灰/过曝或移动 XR 渲染超预算时使用。
 metadata:
   title: 渲染管线与材质规范检查
-  version: "2.0.0"
+  version: "2.1.0"
   role: ta-vfx
   rulepacks:
     - common

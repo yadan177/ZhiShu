@@ -3,7 +3,7 @@ name: ta-unity-importer-gen
 description: 用于编写可配置、非破坏性的 Unity Editor 资产导入校验脚本（AssetPostprocessor 或菜单批量体检窗口），自动检查模型面数/Scale/ReadWrite、贴图 POT/最大尺寸/压缩与 Mipmap、音频 Mono/LoadType/Vorbis 及命名目录规范。当 TA 需要把美术/音频规范固化为 Unity 自动化门禁时使用。
 metadata:
   title: Unity 资产导入校验脚本生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: ta-vfx
   rulepacks:
     - common

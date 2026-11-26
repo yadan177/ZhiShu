@@ -3,7 +3,7 @@ name: art3d-xr-asset-audit
 description: 用于对照 XR 性能预算与实时 3D 资产规范，全面体检模型面数、LOD 梯度、材质球数量、UV 纹素密度、PBR 贴图尺寸/通道打包及碰撞体开销。当三维资产准备移交 TA 或 Unity 研发前做入库体检时使用；不用于代码逻辑审计。
 metadata:
   title: XR 模型与贴图规范体检
-  version: "2.0.0"
+  version: "2.1.0"
   role: 3d-art
   rulepacks:
     - common

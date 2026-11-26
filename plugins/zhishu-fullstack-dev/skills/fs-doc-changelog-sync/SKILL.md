@@ -3,7 +3,7 @@ name: fs-doc-changelog-sync
 description: 用于在代码完成功能迭代、架构调整、接口变更或准备发版时，增量定位并同步受影响的技术文档（架构总览、系统架构图、核心时序图、使用指南）以及 CHANGELOG.md / Release Notes。当研发需要同步技术文档、整理发版变更日志或核对文档与源码漂移时使用。
 metadata:
   title: 技术文档与变更日志同步
-  version: "2.0.0"
+  version: "2.1.0"
   role: fullstack-dev
   rulepacks:
     - common

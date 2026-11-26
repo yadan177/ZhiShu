@@ -3,7 +3,7 @@ name: art3d-intake-manifest
 description: 用于为单批或整版本三维美术资产生成标准化的入库交接清单与资产台账（含名称、路径、面数、LOD、贴图、材质、来源/版权与验证状态），支持本地 Markdown/CSV 输出及按需同步飞书多维表格。当三维美术向 TA/Unity 研发批量移交模型或整理项目资产台账时使用。
 metadata:
   title: 美术资产入库清单生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: 3d-art
   rulepacks:
     - common

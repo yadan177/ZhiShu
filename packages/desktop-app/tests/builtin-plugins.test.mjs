@@ -43,7 +43,7 @@ function createMockCodexHost() {
   };
 }
 
-test("Phase 4：内置官方岗位插件目录可扫描 6 个岗位插件与 42 个 Skills，且保留元数据", async () => {
+test("Phase 4：内置官方岗位插件目录可扫描 6 个岗位插件与 43 个 Skills，且保留元数据", async () => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "zhishu-phase4-scan-")));
   try {
     const library = new PluginLibrary(path.join(root, "imports"), [builtinPluginsDir]);
@@ -62,7 +62,7 @@ test("Phase 4：内置官方岗位插件目录可扫描 6 个岗位插件与 42 
       ],
     );
     const totalSkills = list.reduce((sum, item) => sum + item.skills.length, 0);
-    assert.equal(totalSkills, 42);
+    assert.equal(totalSkills, 43);
 
     for (const plugin of list) {
       assert.equal(plugin.preset, true);
@@ -72,22 +72,25 @@ test("Phase 4：内置官方岗位插件目录可扫描 6 个岗位插件与 42 
       assert.ok(plugin.skillTitles && Object.keys(plugin.skillTitles).length === plugin.skills.length);
     }
 
-    const sampleSkill = await library.readSkill("zhishu-product-pm@2.0.0", "pm-flowchart-swimlane");
+    const sampleSkill = await library.readSkill("zhishu-product-pm@2.1.0", "pm-flowchart-swimlane");
     assert.equal(sampleSkill.title, "业务流程图与泳道图生成");
     assert.match(sampleSkill.content, /# 业务流程图与泳道图生成/);
-    const pmSpatial = await library.readSkill("zhishu-product-pm@2.0.0", "pm-xr-spatial-ui-plan");
+    const pmSpatial = await library.readSkill("zhishu-product-pm@2.1.0", "pm-xr-spatial-ui-plan");
     assert.equal(pmSpatial.title, "XR 空间界面规划");
-    const uiSpatial = await library.readSkill("zhishu-ui-design@2.0.0", "ui-xr-spatial-layout");
+    const uiSpatial = await library.readSkill("zhishu-ui-design@2.1.0", "ui-xr-spatial-layout");
     assert.equal(uiSpatial.title, "XR 空间界面布局设计");
-    const unitySpatial = await library.readSkill("zhishu-unity-dev@2.0.0", "unity-xr-spatial-ui");
+    const unitySpatial = await library.readSkill("zhishu-unity-dev@2.1.0", "unity-xr-spatial-ui");
     assert.equal(unitySpatial.title, "Unity XR 空间 UI 实现");
-    const fsSpatial = await library.readSkill("zhishu-fullstack-dev@2.0.0", "fs-xr-spatial-ui-impl");
+    const fsSpatial = await library.readSkill("zhishu-fullstack-dev@2.1.0", "fs-xr-spatial-ui-impl");
     assert.equal(fsSpatial.title, "跨端空间 UI 开发实现");
-    const unityDiag = await library.readSkill("zhishu-unity-dev@2.0.0", "unity-arch-sequence-diagram");
+    const unityDiag = await library.readSkill("zhishu-unity-dev@2.1.0", "unity-arch-sequence-diagram");
     assert.equal(unityDiag.title, "Unity 架构与时序图生成");
-    const fsDiag = await library.readSkill("zhishu-fullstack-dev@2.0.0", "fs-arch-sequence-diagram");
+    const fsDiag = await library.readSkill("zhishu-fullstack-dev@2.1.0", "fs-arch-sequence-diagram");
     assert.equal(fsDiag.title, "系统架构与时序图生成");
-    await assert.rejects(() => library.readSkill("zhishu-product-pm@2.0.0", "../etc/passwd"), /技能标识无效/);
+    const fsEvo = await library.readSkill("zhishu-fullstack-dev@2.1.0", "fs-evolution-capture");
+    assert.equal(fsEvo.title, "对话现场规则进化捕获");
+    assert.match(fsEvo.content, /zhishu evolve capture/);
+    await assert.rejects(() => library.readSkill("zhishu-product-pm@2.1.0", "../etc/passwd"), /技能标识无效/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -109,7 +112,7 @@ test("Phase 4：内置岗位插件在 Antigravity 与 Codex 完成预览、安�
       findCli: async () => undefined,
     });
 
-    const targetKey = "zhishu-product-pm@2.0.0";
+    const targetKey = "zhishu-product-pm@2.1.0";
     for (const ide of ["antigravity", "codex"]) {
       const preview = await assets.preview("install", targetKey, ide);
       assert.deepEqual(preview.conflicts, []);

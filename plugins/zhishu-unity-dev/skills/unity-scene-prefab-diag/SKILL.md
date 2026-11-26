@@ -3,7 +3,7 @@ name: unity-scene-prefab-diag
 description: 用于诊断 Unity 场景文件（.unity）、预制体（.prefab）及配套 .meta 中的脚本引用丢失（Missing Script/Reference）、Base Prefab 被意外 Apply 污染、高频冲突大场景、隐藏冗余对象、光照/碰撞配置异常及资源加载隐患。当研发排查场景报错、Prefab 覆盖错乱或做合并前诊断时使用。
 metadata:
   title: 场景与预制体诊断
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common

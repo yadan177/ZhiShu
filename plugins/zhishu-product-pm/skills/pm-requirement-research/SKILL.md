@@ -3,7 +3,7 @@ name: pm-requirement-research
 description: 用于新产品立项、大版本规划或功能重构前的需求调研、用户场景拆解、竞品能力对比与范围收敛。当用户需要分析痛点、对比竞品方案、论证功能优先级或界定 MVP 范围时使用；不用于撰写详细字段级 PRD 或技术实现方案。
 metadata:
   title: 需求调研与竞品分析
-  version: "2.0.0"
+  version: "2.1.0"
   role: product-pm
   rulepacks:
     - common

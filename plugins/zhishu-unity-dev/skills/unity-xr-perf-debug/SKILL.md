@@ -3,7 +3,7 @@ name: unity-xr-perf-debug
 description: 用于系统化定位与解决 Unity / XR 应用在真机上出现的掉帧卡顿、GC 尖刺、画面抖动、追踪异常、内存 OOM 闪退及发热降频问题。当研发遇到真机性能故障、需要建立根因假设与收敛排障路径时使用；不用于无症状时的泛泛代码重构。
 metadata:
   title: XR 真机性能排障
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common

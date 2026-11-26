@@ -9,9 +9,16 @@ import type { PluginInspection } from "./plugin-library.ts";
 import { AssetOperations, type UserAssetIde } from "./asset-operations.ts";
 import { McpOperations } from "./mcp-operations.ts";
 import { SourceManager, type AddSourceInput, type TestSourceInput } from "./source-manager.ts";
+import { EvolutionOperations } from "./evolution-operations.ts";
 import { ToolInspector } from "./tool-inspector.ts";
 import { SoftwareUpdateService } from "./software-update.ts";
-import type { McpServerDefinition, McpToolId } from "../../core/src/index.ts";
+import type {
+  EvolutionPatchEdit,
+  EvolutionTargetSource,
+  McpServerDefinition,
+  McpToolId,
+  WatchSourceConfig,
+} from "../../core/src/index.ts";
 
 const operations = new DesktopOperations();
 app.setName("智枢");
@@ -25,6 +32,7 @@ let assetOperations: AssetOperations;
 let mcpOperations: McpOperations;
 let toolInspector: ToolInspector;
 let sourceManager: SourceManager;
+let evolutionOperations: EvolutionOperations;
 const rawDevProfile = !app.isPackaged ? process.env.ZHISHU_DEV_PROFILE : undefined;
 let developmentProfile: string | undefined;
 if (rawDevProfile) {
@@ -86,6 +94,7 @@ function registerHandlers(): void {
         channel.startsWith("assets:") ||
         channel.startsWith("mcp:") ||
         channel.startsWith("sources:") ||
+        channel.startsWith("evolution:") ||
         channel === "project:recover";
       if (fileTask) activeFileTasks++;
       try { return await action(...args as T); }
@@ -276,6 +285,121 @@ function registerHandlers(): void {
     if (typeof id !== "string" || !id) throw new Error("来源标识无效");
     return sourceManager.sync(id);
   });
+
+  const parseEvolutionTargetSource = (raw: unknown): EvolutionTargetSource => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new Error("目标规则源参数无效");
+    }
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.id !== "string" || !obj.id || typeof obj.name !== "string" || !obj.name) {
+      throw new Error("目标规则源缺少标识或名称");
+    }
+    if (obj.root !== undefined && (typeof obj.root !== "string" || !path.isAbsolute(obj.root))) {
+      throw new Error("目标规则源路径必须是绝对路径");
+    }
+    return {
+      id: obj.id,
+      name: obj.name,
+      root: obj.root,
+      readonly: Boolean(obj.readonly),
+    };
+  };
+
+  guarded("evolution:list", () => evolutionOperations.list());
+  guarded("evolution:watch-sources", () => evolutionOperations.getWatchSources());
+  guarded("evolution:save-watch-sources", (rawSources: unknown) => {
+    if (!Array.isArray(rawSources)) throw new Error("巡检源配置必须是数组");
+    return evolutionOperations.saveWatchSources(rawSources as WatchSourceConfig[]);
+  });
+  guarded("evolution:scan-overrides", (workspaceRoot?: unknown) => {
+    if (workspaceRoot !== undefined && (typeof workspaceRoot !== "string" || !path.isAbsolute(workspaceRoot))) {
+      throw new Error("本地规则源路径无效");
+    }
+    return evolutionOperations.scanOverrides(workspaceRoot);
+  });
+  guarded("evolution:watch-docs", (rawOptions?: unknown) => {
+    if (rawOptions === undefined) return evolutionOperations.watchDocs();
+    if (typeof rawOptions !== "object" || rawOptions === null || Array.isArray(rawOptions)) {
+      throw new Error("巡检参数无效");
+    }
+    const opts = rawOptions as Record<string, unknown>;
+    if (opts.sourceIds !== undefined && !isStringArray(opts.sourceIds)) {
+      throw new Error("巡检源标识列表无效");
+    }
+    if (opts.workspaceRoot !== undefined && (typeof opts.workspaceRoot !== "string" || !path.isAbsolute(opts.workspaceRoot))) {
+      throw new Error("本地规则源路径无效");
+    }
+    return evolutionOperations.watchDocs({
+      sourceIds: opts.sourceIds,
+      workspaceRoot: opts.workspaceRoot,
+    });
+  });
+  guarded("evolution:cancel-watch", async () => evolutionOperations.cancelWatch());
+  guarded("evolution:import-proposal", async (workspaceRoot?: unknown) => {
+    if (workspaceRoot !== undefined && (typeof workspaceRoot !== "string" || !path.isAbsolute(workspaceRoot))) {
+      throw new Error("本地规则源路径无效");
+    }
+    const result = await dialog.showOpenDialog(requireWindow(), {
+      title: "选择进化提案 JSON 文件",
+      buttonLabel: "导入提案",
+      filters: [{ name: "进化提案 JSON", extensions: ["json"] }],
+      properties: ["openFile", "noResolveAliases"],
+    });
+    if (result.canceled || !result.filePaths[0]) return undefined;
+    return evolutionOperations.importProposalFile(result.filePaths[0], workspaceRoot);
+  });
+  guarded("evolution:recheck", (proposalId: unknown, rawSource: unknown) => {
+    if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
+    return evolutionOperations.recheck(proposalId, parseEvolutionTargetSource(rawSource));
+  });
+  guarded("evolution:preview", (proposalId: unknown, rawSource: unknown, rawPatch?: unknown) => {
+    if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
+    let editedPatch: EvolutionPatchEdit | undefined;
+    if (rawPatch !== undefined) {
+      if (typeof rawPatch !== "object" || rawPatch === null || Array.isArray(rawPatch)) {
+        throw new Error("补丁编辑参数无效");
+      }
+      const p = rawPatch as Record<string, unknown>;
+      if (
+        (p.anchorHeading !== undefined && typeof p.anchorHeading !== "string") ||
+        (p.beforeSnippet !== undefined && typeof p.beforeSnippet !== "string") ||
+        (p.afterSnippet !== undefined && typeof p.afterSnippet !== "string")
+      ) {
+        throw new Error("补丁字段必须是字符串");
+      }
+      editedPatch = {
+        anchorHeading: p.anchorHeading,
+        beforeSnippet: p.beforeSnippet,
+        afterSnippet: p.afterSnippet,
+      };
+    }
+    return evolutionOperations.preview(proposalId, parseEvolutionTargetSource(rawSource), editedPatch);
+  });
+  guarded("evolution:apply", (token: unknown) => {
+    if (typeof token !== "string" || !token) throw new Error("进化写入令牌无效");
+    return evolutionOperations.apply(token);
+  });
+  guarded("evolution:reject", (proposalId: unknown, reason?: unknown) => {
+    if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
+    if (reason !== undefined && typeof reason !== "string") throw new Error("驳回原因无效");
+    return evolutionOperations.reject(proposalId, reason);
+  });
+  guarded("evolution:export-patch", async (proposalId: unknown, targetSourceRoot?: unknown) => {
+    if (typeof proposalId !== "string" || !proposalId) throw new Error("提案标识无效");
+    if (targetSourceRoot !== undefined && (typeof targetSourceRoot !== "string" || !path.isAbsolute(targetSourceRoot))) {
+      throw new Error("规则源路径无效");
+    }
+    const result = await dialog.showSaveDialog(requireWindow(), {
+      title: "导出规则进化增量补丁",
+      defaultPath: path.join(app.getPath("downloads"), `${proposalId}.patch`),
+      filters: [
+        { name: "补丁文件", extensions: ["patch"] },
+        { name: "Markdown", extensions: ["md"] },
+      ],
+    });
+    if (result.canceled || !result.filePath) return undefined;
+    return evolutionOperations.exportPatch(proposalId, result.filePath, targetSourceRoot);
+  });
   guarded("rules:default-workspace-source", async () => {
     if (app.isPackaged) return undefined;
     const repoCandidate = path.resolve(__dirname, "../../..");
@@ -449,6 +573,25 @@ if (!app.requestSingleInstanceLock()) {
     mcpOperations = new McpOperations(path.join(app.getPath("userData"), "mcp-assets"), profilePaths);
     toolInspector = new ToolInspector(profilePaths);
     sourceManager = new SourceManager(path.join(app.getPath("userData"), "sources"));
+    evolutionOperations = new EvolutionOperations(path.join(app.getPath("userData"), "evolution"), {
+      registry,
+      sourceManager,
+      defaultWorkspaceRoot: async () => {
+        if (app.isPackaged) return undefined;
+        const repoCandidate = path.resolve(__dirname, "../../..");
+        try {
+          const info = await inspectWorkspaceSource(repoCandidate);
+          return info.root;
+        } catch {
+          return undefined;
+        }
+      },
+      onWatchProgress: (progress) => {
+        if (window && !window.isDestroyed()) {
+          window.webContents.send("evolution:watch-progress", progress);
+        }
+      },
+    });
     registerHandlers();
     createWindow();
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -1,5 +1,21 @@
 # 变更记录
 
+## 2.1.0 - 2026-11-26
+
+### Added
+- **三通道规则自动进化引擎与第 5 一级模块「规则进化」**：
+  - 新增第 8 套数据契约 [schemas/evolution.schema.json](schemas/evolution.schema.json) 与平台无关进化引擎 [packages/core/src/evolution.ts](packages/core/src/evolution.ts)（`EvolutionStore`、ACE 原子增量补丁计算 `computeAtomicDeltaPatch`、跨项目只读覆盖扫描 `scanOverridesForPromotions`、防 SSRF 官方文档巡检 `watchOfficialDocs`、敏感凭据与私有路径硬阻断 `detectSensitiveContent`、写入后自动门禁与回滚 `validateEvolutionTargetFile`）。
+  - 新增 `zhishu evolve` CLI 子命令（`capture` / `list` / `scan-overrides` / `preview` / `apply --apply` / `reject` / `export`）与第 43 个官方技能 [fs-evolution-capture](plugins/zhishu-fullstack-dev/skills/fs-evolution-capture/SKILL.md)，默认投递至同机智枢桌面端收件箱。
+  - 桌面端升级为左侧 5 模块导航，新增 [EvolutionPage.tsx](packages/desktop-app/src/EvolutionPage.tsx) 与主进程 [evolution-operations.ts](packages/desktop-app/electron/evolution-operations.ts)（12 个受控 `evolution:*` IPC 与实时巡检进度推送），支持右侧提案审阅抽屉、聚焦增量行号的双栏 Diff 审批弹窗、只读源拦截、补丁导出与官方文档巡检源管理。
+  - 完整补充 `@zhishu/core`、`zhishu-desktop` 与 CLI E2E 规则进化自动化测试套件。
+
+### Changed
+- **XR 空间界面与布局参数官方校准**：对照 Apple visionOS HIG、Meta Horizon OS 与 PICO OS 官方规范校准视距、热区与空间安全参数，并同步至对应底层规则包与 5 份 XR 空间 UI Skills。
+- **工作区资产精简**：清理历史 `1.x`/`2.0.0` 独立桌面发布说明与已退役的 `adapters/{codex,qoder}/templates/` 静态迁移副本（历史记录保留于 Git 与 `CHANGELOG.md`）。
+
+### Fixed
+- 修复「项目规则」页选择「智枢官方源」时因残留 `releasedInOfficial015` 字段导致 6 个 2.0 新增规则包错误置灰不可选的问题。
+
 ## 2.0.0 - 2026-11-25
 
 ### Changed

@@ -3,7 +3,7 @@ name: fs-api-contract-sync
 description: 用于在双端或跨服务接口开发与联调期间，核对 OpenAPI / Protobuf / TypeScript 类型与前后端（或客户端/服务端）实际实现是否严格一致，检查字段命名、64 位 ID/金额精度、时区时间、错误码、`requestId`、幂等性与向下兼容性。当研发定义新接口、修改既有接口或排查前后端联调错位时使用。
 metadata:
   title: 接口契约与前后端联调核对
-  version: "2.0.0"
+  version: "2.1.0"
   role: fullstack-dev
   rulepacks:
     - common

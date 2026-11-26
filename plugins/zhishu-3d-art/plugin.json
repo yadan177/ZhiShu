@@ -1,7 +1,7 @@
 {
   "name": "zhishu-3d-art",
   "displayName": "三维设计师",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "面向 XR 与实时 3D 项目的图生 3D 准备、AI 粗模修复重拓扑、模型与贴图体检、FBX/glTF 导出校验、入库清单生成与 Blender 批处理脚本技能套件。",
   "author": {
     "name": "智枢官方"

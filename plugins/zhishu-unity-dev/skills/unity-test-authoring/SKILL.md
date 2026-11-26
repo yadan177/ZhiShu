@@ -3,7 +3,7 @@ name: unity-test-authoring
 description: 用于为 Unity 项目编写结构清晰、可稳定重复运行的 EditMode / PlayMode 单元测试与编辑器验证脚本（基于 Unity Test Framework / NUnit），覆盖纯 C# 核心逻辑、状态机、协议序列化、边界容错与轻量场景冒烟。当 Unity 研发需要补齐自动化测试或为关键 Bug 写回归测试时使用。
 metadata:
   title: 单元测试与验证脚本编写
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common

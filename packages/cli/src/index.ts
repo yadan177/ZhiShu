@@ -23,10 +23,22 @@ import {
   assertReleaseNotOlder,
   listInterruptedTransactions,
   recoverInterruptedProject,
+  EvolutionStore,
+  resolveDefaultEvolutionDir,
+  scanOverridesForPromotions,
+  validateEvolutionTargetFile,
 } from "@zhishu/core";
-import type { DetectionResult, ProjectChange, ProjectPlan, UninstallPlan } from "@zhishu/core";
+import type {
+  DetectionResult,
+  EvolutionChannel,
+  EvolutionOperation,
+  EvolutionTargetKind,
+  ProjectChange,
+  ProjectPlan,
+  UninstallPlan,
+} from "@zhishu/core";
 
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 const DEFAULT_REPOSITORY = "yadan177/ZhiShu";
 
 function printHelp(): void {
@@ -45,6 +57,7 @@ function printHelp(): void {
   recover     查看中断事务；加 --apply 才会恢复原版本
   generate    update 的兼容命令，同样需要 --apply
   validate    只验证已安装项目文件的完整性
+  evolve      规则自动进化（capture / list / scan-overrides / preview / apply / reject / export）
   version     输出 CLI 版本
   help        显示帮助
 
@@ -53,7 +66,10 @@ function printHelp(): void {
       zhishu uninstall /path/to/project --details
       zhishu uninstall /path/to/project --apply
       zhishu init /path/to/project --targets codex,antigravity,trae,qoder,cursor,workbuddy
-      zhishu init /path/to/project --source-workspace /path/to/ZhiShu --rulepacks common,unity,xr-common,product-pm`);
+      zhishu init /path/to/project --source-workspace /path/to/ZhiShu --rulepacks common,unity,xr-common,product-pm
+      zhishu evolve capture --title "规范标题" --target-kind rule --target-path rulepacks/common/entry.md --anchor "## 工作准则" --op add-item --after "- 新增条目" --evidence "会话纠偏依据"
+      zhishu evolve list --status pending
+      zhishu evolve apply <proposal-id> --source-workspace /path/to/ZhiShu --apply`);
 }
 
 function isAgentsMdTarget(value: string): value is (typeof AGENTS_MD_TARGETS)[number] {
@@ -154,6 +170,247 @@ async function projectConfigExists(root: string): Promise<boolean> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
+  }
+}
+
+function readFlagValue(args: readonly string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${flag} 缺少参数值`);
+  }
+  return value;
+}
+
+function collectPositionalArgs(args: readonly string[], valueFlags: ReadonlySet<string>): string[] {
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg.startsWith("--")) {
+      if (valueFlags.has(arg)) i++;
+      continue;
+    }
+    positionals.push(arg);
+  }
+  return positionals;
+}
+
+async function runEvolve(args: readonly string[]): Promise<void> {
+  const subcommand = args[0] ?? "help";
+  const rest = args.slice(1);
+  const valueFlags = new Set([
+    "--inbox",
+    "--from-json",
+    "--title",
+    "--channel",
+    "--target-kind",
+    "--target-path",
+    "--rulepack",
+    "--anchor",
+    "--op",
+    "--before",
+    "--after",
+    "--summary",
+    "--evidence",
+    "--source-label",
+    "--url",
+    "--source-workspace",
+    "--status",
+    "--reason",
+    "--out",
+  ]);
+  const inboxArg = readFlagValue(rest, "--inbox");
+  const inboxDir = inboxArg ? path.resolve(inboxArg) : resolveDefaultEvolutionDir();
+  const store = new EvolutionStore(inboxDir);
+
+  switch (subcommand) {
+    case "capture": {
+      const sourceWorkspace = readFlagValue(rest, "--source-workspace");
+      const fromJson = readFlagValue(rest, "--from-json");
+      let result;
+      if (fromJson) {
+        result = await store.importProposalFile(path.resolve(fromJson), {
+          targetSourceRoot: sourceWorkspace ? path.resolve(sourceWorkspace) : undefined,
+        });
+      } else {
+        const title = readFlagValue(rest, "--title");
+        const targetKind = (readFlagValue(rest, "--target-kind") ?? "rule") as EvolutionTargetKind;
+        const targetPath = readFlagValue(rest, "--target-path");
+        const anchorHeading = readFlagValue(rest, "--anchor");
+        const operation = (readFlagValue(rest, "--op") ?? "add-item") as EvolutionOperation;
+        const channel = (readFlagValue(rest, "--channel") ?? "session-capture") as EvolutionChannel;
+        const beforeSnippet = readFlagValue(rest, "--before");
+        const afterSnippet = readFlagValue(rest, "--after");
+        const summary = readFlagValue(rest, "--summary");
+        const targetRulepack = readFlagValue(rest, "--rulepack");
+        const evidenceSummary = readFlagValue(rest, "--evidence");
+        const sourceLabel = readFlagValue(rest, "--source-label") ?? "CLI 会话捕获";
+        const url = readFlagValue(rest, "--url");
+        if (!title || !targetPath || !anchorHeading || !evidenceSummary) {
+          throw new Error(
+            "capture 必填参数：--title、--target-path、--anchor、--evidence（或使用 --from-json <file>）",
+          );
+        }
+        result = await store.capture(
+          {
+            channel,
+            targetKind,
+            operation,
+            title,
+            summary,
+            targetRulepack,
+            targetPath,
+            anchorHeading,
+            beforeSnippet,
+            afterSnippet,
+            evidence: [
+              {
+                sourceLabel,
+                summary: evidenceSummary,
+                ...(url ? { url } : {}),
+                verifiedAt: new Date().toISOString().slice(0, 10),
+              },
+            ],
+          },
+          { targetSourceRoot: sourceWorkspace ? path.resolve(sourceWorkspace) : undefined },
+        );
+      }
+      if (result.outcome === "created" && result.proposal) {
+        console.log(`已投递至规则进化待审收件箱：${result.proposal.id}`);
+        console.log(`目标文件：${result.proposal.targetPath}（${result.proposal.anchorHeading}）`);
+        console.log(`收件箱目录：${inboxDir}`);
+      } else if (result.outcome === "duplicate" && result.proposal) {
+        console.log(`已存在同指纹待审提案，已自动折叠：${result.proposal.id}`);
+      } else {
+        console.log(`该提案指纹曾被驳回，未重复入箱（${result.fingerprint.slice(0, 12)}）`);
+      }
+      return;
+    }
+    case "list": {
+      const statusFilter = readFlagValue(rest, "--status") ?? "all";
+      const listed = await store.list();
+      const filtered = listed.proposals.filter((item) => {
+        if (statusFilter === "all") return true;
+        if (statusFilter === "pending") return item.status === "pending" || item.status === "stale";
+        if (statusFilter === "processed") {
+          return item.status === "approved" || item.status === "rejected" || item.status === "archived";
+        }
+        return item.status === statusFilter;
+      });
+      if (rest.includes("--json")) {
+        console.log(JSON.stringify({ counts: listed.counts, proposals: filtered }, null, 2));
+        return;
+      }
+      console.log(
+        `规则进化收件箱（待审 ${listed.counts.pendingTab} · 有冲突 ${listed.counts.conflictTab} · 已处理 ${listed.counts.processedTab}）：`,
+      );
+      if (!filtered.length) {
+        console.log("（无匹配提案）");
+        return;
+      }
+      for (const item of filtered) {
+        console.log(`- [${item.status}] ${item.id} | ${item.channel} | ${item.targetPath} | ${item.title}`);
+      }
+      return;
+    }
+    case "scan-overrides": {
+      const projects = collectPositionalArgs(rest, valueFlags).map((item) => path.resolve(item));
+      if (projects.length < 2) {
+        throw new Error("scan-overrides 至少需要传入 2 个项目目录以提取跨项目共性覆盖");
+      }
+      const sourceWorkspace = readFlagValue(rest, "--source-workspace");
+      const targetSourceRoot = sourceWorkspace ? path.resolve(sourceWorkspace) : undefined;
+      const scan = await scanOverridesForPromotions(projects, { targetSourceRoot });
+      let created = 0;
+      let folded = 0;
+      for (const candidate of scan.candidates) {
+        const res = await store.capture(candidate, { targetSourceRoot });
+        if (res.outcome === "created") created++;
+        else folded++;
+      }
+      console.log(
+        `已只读扫描 ${scan.scannedCount} 个项目（跳过 ${scan.skippedProjects.length} 个）：新增 ${created} 条升格提案，折叠 ${folded} 条重复/已驳回项。`,
+      );
+      return;
+    }
+    case "preview":
+    case "apply": {
+      const positionals = collectPositionalArgs(rest, valueFlags);
+      const proposalId = positionals[0];
+      const sourceWorkspace = readFlagValue(rest, "--source-workspace");
+      if (!proposalId || !sourceWorkspace) {
+        throw new Error(`${subcommand} 需要参数：<proposal-id> --source-workspace <dir>`);
+      }
+      const resolvedSource = path.resolve(sourceWorkspace);
+      const preview = await store.preview(proposalId, {
+        id: "cli-workspace",
+        name: path.basename(resolvedSource) || resolvedSource,
+        root: resolvedSource,
+        readonly: false,
+      });
+      console.log(`提案：${preview.proposalId} · ${preview.title}`);
+      console.log(`目标：${preview.targetFilePath}（${preview.anchorHeading}，${preview.lineCountBefore} → ${preview.lineCountAfter} 行）`);
+      if (preview.similarItems.length) {
+        console.log(`相似条款提醒：命中 ${preview.similarItems.length} 处（最高相似度 ${Math.round(preview.similarItems[0]!.similarity * 100)}%）`);
+      }
+      if (preview.overBudget) {
+        console.log(`体量预算提示：写入后 ${preview.lineCountAfter} 行，超过建议阈值 ${preview.lineBudget} 行，建议优先修订或合并旧条目。`);
+      }
+      if (preview.conflicts.length) {
+        for (const conflict of preview.conflicts) console.error(conflict);
+        process.exitCode = 2;
+        return;
+      }
+      console.log(
+        renderChange({
+          path: preview.targetPath,
+          action: "modify",
+          before: preview.beforeContent,
+          after: preview.afterContent,
+        }),
+      );
+      if (subcommand === "preview" || !rest.includes("--apply")) {
+        console.log(`审查无误后，运行 zhishu evolve apply ${proposalId} --source-workspace ${resolvedSource} --apply 确认写入。`);
+        return;
+      }
+      const applied = await store.apply(preview.token, validateEvolutionTargetFile);
+      console.log(`已原子写入并完成自动化门禁校验：${applied.receipt.targetFilePath}`);
+      return;
+    }
+    case "reject": {
+      const positionals = collectPositionalArgs(rest, valueFlags);
+      const proposalId = positionals[0];
+      if (!proposalId) throw new Error("reject 需要指定 <proposal-id>");
+      const reason = readFlagValue(rest, "--reason");
+      const updated = await store.reject(proposalId, reason);
+      console.log(`已驳回提案并记录去重指纹：${updated.id}`);
+      return;
+    }
+    case "export": {
+      const positionals = collectPositionalArgs(rest, valueFlags);
+      const proposalId = positionals[0];
+      const outPath = readFlagValue(rest, "--out");
+      if (!proposalId || !outPath) throw new Error("export 需要参数：<proposal-id> --out <file.patch>");
+      const sourceWorkspace = readFlagValue(rest, "--source-workspace");
+      const exported = await store.exportPatch(
+        proposalId,
+        path.resolve(outPath),
+        sourceWorkspace ? path.resolve(sourceWorkspace) : undefined,
+      );
+      console.log(`已导出增量补丁：${exported.path}（${exported.sha256}）`);
+      return;
+    }
+    default:
+      console.log(`用法：
+  zhishu evolve capture --title <标题> --target-kind rule|skill --target-path <相对路径> --anchor <章节标题> --op add-item|update-item|deprecate-item --after <内容> --evidence <依据>
+  zhishu evolve capture --from-json <提案文件.json>
+  zhishu evolve list [--status pending|conflict|stale|processed|all] [--json]
+  zhishu evolve scan-overrides <project1> <project2> [...] [--source-workspace <规则源目录>]
+  zhishu evolve preview <proposal-id> --source-workspace <规则源目录>
+  zhishu evolve apply <proposal-id> --source-workspace <规则源目录> --apply
+  zhishu evolve reject <proposal-id> [--reason <原因>]
+  zhishu evolve export <proposal-id> --out <补丁文件.patch>`);
   }
 }
 
@@ -289,6 +546,10 @@ async function run(): Promise<void> {
         return;
       }
       console.log(`智枢项目验证通过：${root}`);
+      return;
+    }
+    case "evolve": {
+      await runEvolve(process.argv.slice(3));
       return;
     }
     case "check": {

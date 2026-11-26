@@ -3,7 +3,7 @@ name: art3d-blender-batch
 description: 用于编写安全、可复现的 Blender Python (`bpy`) 批处理脚本，自动执行模型命名校验、轴心归底、清理变换、检查非流形/面数、批量生成规范导出（FBX/glTF）及资产数据报表导出。当三维设计师需要批量处理多个 Blender 模型或自动化导出检查时使用；不用于编写 Unity C# 运行时代码。
 metadata:
   title: Blender 批处理脚本生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: 3d-art
   rulepacks:
     - common

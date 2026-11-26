@@ -3,7 +3,7 @@ name: fs-test-generation
 description: 用于依据项目既有测试框架（如 Node 原生 node:test、Go testing、JUnit、pytest 等）为新增功能、核心算法、边界容错或已修复 Bug 编写高信噪比、可独立运行的单元测试与集成测试，并实际运行验证。当研发需要补齐自动化测试或防回归用例时使用。
 metadata:
   title: 自动化测试生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: fullstack-dev
   rulepacks:
     - common

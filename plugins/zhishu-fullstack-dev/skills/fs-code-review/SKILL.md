@@ -3,7 +3,7 @@ name: fs-code-review
 description: 用于对 JavaScript/TypeScript、Go、Java 或 Python 代码变更（PR / Git Diff / 目标模块）进行系统性代码审查，重点排查正确性缺陷、并发与异步边界、安全漏洞、资源泄漏、向后兼容破坏及测试缺口。当研发提 PR 自检、同行代码评审或审查 AI 生成代码时使用。
 metadata:
   title: 代码审查与风险排查
-  version: "2.0.0"
+  version: "2.1.0"
   role: fullstack-dev
   rulepacks:
     - common

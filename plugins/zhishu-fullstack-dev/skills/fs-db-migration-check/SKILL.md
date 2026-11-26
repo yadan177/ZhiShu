@@ -3,7 +3,7 @@ name: fs-db-migration-check
 description: 用于审查关系型/文档型数据库 Schema 变更、SQL 迁移脚本、本地配置/锁文件 schemaVersion 升级与索引调整，重点排查锁表风险、数据丢失、不可逆破坏性变更、先扩后缩（Expand-Contract）兼容性与回滚预案。当研发新增表结构、修改字段、编写迁移脚本或升级持久化配置格式时使用。
 metadata:
   title: 数据库与迁移变更检查
-  version: "2.0.0"
+  version: "2.1.0"
   role: fullstack-dev
   rulepacks:
     - common

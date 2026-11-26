@@ -91,7 +91,7 @@ export async function discoverCodexSkills(binary: string, userHome: string, code
         collect(message.result); finish(undefined, result);
       }
     });
-    send({ id: 1, method: "initialize", params: { clientInfo: { name: "zhishu-installer", version: "2.0.0" }, capabilities: { experimentalApi: false } } });
+    send({ id: 1, method: "initialize", params: { clientInfo: { name: "zhishu-installer", version: "2.1.0" }, capabilities: { experimentalApi: false } } });
   });
 }
 

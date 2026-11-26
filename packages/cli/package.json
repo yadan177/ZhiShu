@@ -1,6 +1,6 @@
 {
   "name": "zhishu",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "智枢：跨项目安装、检查和安全更新 Codex 工程规则",
   "license": "Apache-2.0",
   "repository": {
@@ -25,7 +25,7 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@zhishu/adapter-codex": "2.0.0",
-    "@zhishu/core": "2.0.0"
+    "@zhishu/adapter-codex": "2.1.0",
+    "@zhishu/core": "2.1.0"
   }
 }

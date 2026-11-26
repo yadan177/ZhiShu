@@ -3,7 +3,7 @@ name: art3d-ai-mesh-retopo
 description: 用于制定 AI 生成 3D 粗模（三角杂乱网格、高面数、碎片 UV、脏贴图）进入实时 Unity/XR 引擎前的清洗、重拓扑、UV 重展、烘焙去光影与 LOD 拆分实操方案。当用户拿到图生 3D 粗模需要精修到可入库标准时使用；不用于概念原画创作。
 metadata:
   title: AI 生成模型修复与重拓扑
-  version: "2.0.0"
+  version: "2.1.0"
   role: 3d-art
   rulepacks:
     - common

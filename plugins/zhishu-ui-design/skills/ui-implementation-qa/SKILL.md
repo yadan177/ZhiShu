@@ -3,7 +3,7 @@ name: ui-implementation-qa
 description: 用于对照定稿设计稿、视觉规范与交互状态矩阵，对已实现的前端页面、桌面客户端或 Unity/XR 界面进行逐项视觉走查与还原度验收，输出分级缺陷单与修复建议。当研发提测 UI 页面、需要走查视觉偏差或确认改稿是否落地时使用；不用于后端接口性能压测。
 metadata:
   title: 界面实现还原度验收
-  version: "2.0.0"
+  version: "2.1.0"
   role: ui-design
   rulepacks:
     - common

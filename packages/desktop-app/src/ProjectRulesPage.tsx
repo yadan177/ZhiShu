@@ -100,7 +100,7 @@ export function ProjectRulesPage({
     [selectedRulepacks, workspaceSource],
   );
 
-  const isPackAvailable = (packId: string, releasedInOfficial015: boolean): boolean => {
+  const isPackAvailable = (packId: string): boolean => {
     if (effectiveSourceType === "workspace") {
       if (mode === "install") {
         return workspacePackIds ? workspacePackIds.has(packId) : false;
@@ -108,7 +108,8 @@ export function ProjectRulesPage({
       // 更新模式下的本地源项目可能指向用户自定义目录，不提前锁死，由核心校验。
       return true;
     }
-    return releasedInOfficial015;
+    // 智枢官方源 v2.0.0 及以上已完整发布目录中的全部规则包，具体可用性仍由预览阶段核心校验兜底。
+    return true;
   };
 
   const interrupted = (status?.interruptedTransactions.length ?? 0) > 0;
@@ -167,7 +168,7 @@ export function ProjectRulesPage({
                 const requiredByEnterprise = enterpriseRequiredPacks.has(pack.id);
                 const selected = selectedRulepacks.includes(pack.id) || requiredByEnterprise;
                 const implicit = !selected && implicitDeps.has(pack.id);
-                const available = isPackAvailable(pack.id, pack.releasedInOfficial015);
+                const available = isPackAvailable(pack.id);
                 const disabled = disabledAll || !available || requiredByEnterprise;
                 return (
                   <button
@@ -194,9 +195,6 @@ export function ProjectRulesPage({
                         <span className="rulepack-item-name">{pack.name}</span>
                         {requiredByEnterprise && <span className="badge badge--enterprise">企业必选</span>}
                         {!requiredByEnterprise && implicit && <span className="badge badge--brand">自动依赖</span>}
-                        {!available && effectiveSourceType === "github" && (
-                          <span className="badge badge--muted">本地源可用</span>
-                        )}
                         {!available && effectiveSourceType === "workspace" && (
                           <span className="badge badge--muted">未包含</span>
                         )}

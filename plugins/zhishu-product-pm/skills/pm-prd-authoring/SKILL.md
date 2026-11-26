@@ -3,7 +3,7 @@ name: pm-prd-authoring
 description: 用于编写或重构可落地研发与设计的正式产品需求文档（PRD），包含背景目标、范围边界、角色权限、业务流程图/泳道图、页面功能规则、异常与状态机及验收标准。当用户需要写 PRD、补全需求文档、细化功能规格或梳理跨端业务泳道图时使用；不用于编写底层技术架构设计文档。
 metadata:
   title: PRD 需求文档编写
-  version: "2.0.0"
+  version: "2.1.0"
   role: product-pm
   rulepacks:
     - common

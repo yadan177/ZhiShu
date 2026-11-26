@@ -3,7 +3,7 @@ name: unity-xr-spatial-ui
 description: 用于在 Unity（OpenXR / XR Interaction Toolkit / PICO XR SDK / Meta XR SDK / visionOS PolySpatial）中设计、实现或重构 XR 空间 UI 系统，涵盖 World Space Canvas / UI Toolkit 空间化配置、头部 Yaw-only 初始生成、Lazy Follow 死区与帧率无关阻尼、多窗拓扑与防重叠调度、MR 墙面/桌面/3D 物体碰撞避让、射线与裸手直触热区防抖以及 Canvas 动静拆分性能优化。当 Unity 研发编写空间面板控制器、窗口管理器或排查空间 UI 穿模/抖动/点不准时使用；不用于纯 2D 屏幕 UGUI 或通用 C# 代码审查（走 unity-code-review）。
 metadata:
   title: Unity XR 空间 UI 实现
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common
@@ -24,10 +24,11 @@ metadata:
 
 ## 2. 工程设计与实现步骤
 
-1. **统一世界空间画布与尺度映射**：
-   - 采用 World Space Canvas（绑定 `worldCamera` 与 XR `GraphicRaycaster`）或已验证的 UI Toolkit 空间 Panel，显式固定 `Canvas Scale` / `Dynamic Pixels Per Unit`，动态文本统一用 `TextMeshPro` SDF 渲染，绝不使用 `Screen Space - Overlay`。
+1. **统一世界空间画布、尺度映射与高清文字合成层**：
+   - 采用 World Space Canvas（绑定 `worldCamera` 与 XR `GraphicRaycaster`）或已验证的 UI Toolkit 空间 Panel，显式固定 `Canvas Scale` / `Dynamic Pixels Per Unit`，动态文本统一用 `TextMeshPro` SDF 渲染，绝不使用 `Screen Space - Overlay`；
+   - 文字密集或高频阅读面板优先评估硬件合成层（Unity 官方跨平台 **`com.unity.xr.compositionlayers` Quad/Cylinder UI Panel**、Meta **`OVROverlayCanvas`** 或 PICO **`PXR_Overlay`**）规避眼缓冲二次采样模糊，同时严控合成层预算（如 Meta 单场景上限 15 层）并处理与 3D 物体的深度遮挡。
 2. **实现安全定位与跟随组件**：
-   - **Yaw-Only 首次弹出**：对头部 `forward` 做水平面投影（`Vector3.ProjectOnPlane`），处理垂直仰俯退化向量，按默认视距与眼高微俯偏移生成，并强制离眼安全距 `>= 0.45m`；
+   - **Yaw-Only 首次弹出与视距保护**：对头部 `forward` 做水平面投影（`Vector3.ProjectOnPlane`），处理垂直仰俯退化向量，按默认视距与眼高微俯偏移生成，强制离眼安全距 `>= 0.45m`，并**避开 `0.50–0.80m` 中距交互歧义带**（射线主窗 `1.0–2.0m`，世界锚点关联 UI 建议 `≤ 3.0m`）；
    - **惰性跟随（Lazy Follow）**：设置水平角度死区与距离死区，采用帧率无关指数阻尼或 `SmoothDamp`，用户悬停/拖拽/输入期间自动冻结跟随；**严禁挂在相机节点下做头部硬锁**。
 3. **实现多窗调度、拖拽缩放与防穿模避让**：
    - 通过集中式 `SpatialWindowManager` 维护活动窗口上限、弧形/折角（15°–25°）槽位、外部附属条（Ornament）父子同步与 Recenter 一键召回；

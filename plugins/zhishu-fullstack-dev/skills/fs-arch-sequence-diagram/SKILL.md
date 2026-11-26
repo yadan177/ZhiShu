@@ -3,7 +3,7 @@ name: fs-arch-sequence-diagram
 description: 用于基于真实全栈工程源码（JS/TS、Go、Java、Python、桌面端/Web）或技术设计方案，绘制清晰的系统架构图（端/网关/服务/数据/外部依赖与进程边界）和核心调用时序图（鉴权、跨端联调、事务写入、异步队列与异常回滚）。当研发做技术方案评审、双端接口对齐或为项目补全架构与时序视图时使用；不用于画产品功能结构树。
 metadata:
   title: 系统架构与时序图生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: fullstack-dev
   rulepacks:
     - common

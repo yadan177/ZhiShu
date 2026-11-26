@@ -11,8 +11,10 @@
 
 - 🔴 **统一采用世界空间渲染**：UGUI 项目必须使用 `Canvas Render Mode = World Space` 并显式绑定主 XR 相机（`worldCamera`）及对应 XR 射线投射器（如 `TrackedDeviceGraphicRaycaster`）；采用 UI Toolkit 时须使用项目已验证的 World Space Panel 渲染管线，不得未经授权混用两套 UI 框架。
 - 🔴 **显式固化像素到物理米的换算比例**：在 Prefab 或配置资产中固定 `Canvas Scale`（例如 `1000 px = 1.0 m` 对应 `localScale = (0.001, 0.001, 0.001)`）及 `Dynamic Pixels Per Unit`，并在注释/配置中记录默认观看距离，确保设计稿尺寸与引擎物理尺寸严格一一对应。
-- 🔴 **文字渲染必须防闪烁锯齿**：动态文本统一使用 `TextMeshPro`（SDF 字体渲染）或平台原生高清文字层，禁止使用低分辨率位图 `Legacy Text` 或将整段动态文案烘焙成静态低分贴图。
-- 🟡 为不同视距层级（近距直触 `0.45–0.65m`、中距主窗 `1.2–2.5m`、远距看板 `> 3.0m`）提供标准化的基类或 `ScriptableObject` 布局配置，避免每个界面手写散落的魔法数字。
+- 🔴 **文字渲染必须防闪烁锯齿，文字密集面板优先评估硬件合成层（Composition Layers）**：
+  - 常规世界空间动态文本统一使用 `TextMeshPro`（SDF 字体渲染）或平台原生高清文字层，禁止使用低分辨率位图 `Legacy Text` 或将动态文案烘焙为低分贴图；
+  - 🟡 **高清晰度文本菜单/阅读面板优先采用硬件合成层**：普通 World Space Canvas 会先渲染进主眼缓冲（Eye Buffer），再经 XR 运行时透镜畸变二次采样导致小字模糊闪烁；对文字密集或高频阅读面板，优先评估 Unity 官方跨平台 **`XR Composition Layers`（`com.unity.xr.compositionlayers` 的 Quad / Cylinder UI Panel）**、Meta **`OVROverlay` / `OVROverlayCanvas`** 或 PICO **`PXR_Overlay`**，直接交由硬件合成器输出锐利点对点文字。同时严控合成层数量上限（如 Meta 硬件合成器单场景上限为 15 层，建议仅留给关键 UI/视频）并核对与 3D 场景的深度遮挡（Underlay / 深度提交）关系。
+- 🟡 为不同视距层级（近距直触 `< 0.46m`、**避开 `0.50–0.80m` 交互歧义带**、中距主窗 `1.0–2.0m`、远距看板/锚点 `≤ 3.0m`）提供标准化的基类或 `ScriptableObject` 布局配置，避免每个界面手写散落的魔法数字。
 
 ## 2. 初始弹出（Yaw-Only）、朝向与惰性跟随
 
@@ -93,9 +95,11 @@ panel.SetPositionAndRotation(targetPos, targetRot);
 
 | 目标平台 | 工程实现与适配重点 | 常见易错点 |
 |---|---|---|
-| **PICO（OpenXR / PICO XR SDK）** | 优先基于 OpenXR + XR Interaction Toolkit 统一射线/直触输入；MR 彩透模式显式核对透视开启顺序、相机清除颜色（Alpha=0）与底板不透明度 | 忽略相机背景 Alpha 导致透视黑屏；只测手柄射线漏测单手/裸手切换 |
-| **Meta Quest（OpenXR / Meta XR SDK）** | 兼容手柄射线与裸手近/远捏合无缝切换；使用曲面 Canvas 或官方 Ray/Poke 组件时核对深度遮挡与 Passthrough 合成顺序 | 裸手捏合微抖导致点击丢失；过量半透明叠层触发一体机热降频 |
-| **Apple visionOS（PolySpatial / 原生混合）** | 区分 Unity PolySpatial 托管空间（Bounded/Unbounded Volume）与原生 SwiftUI Window/Ornament 边界；遵循系统眼动 Hover 反馈与间距约束 | 在 PolySpatial 中假设自由任意自定义后处理模糊，或忽略眼动注视高亮规范 |
+| **PICO（OpenXR / PICO XR SDK / PICO OS 6）** | 优先基于 OpenXR + XRI 统一输入，兼顾 PICO OS 6 的眼动+捏合多模态与 6DoF 手柄；文字密集面板可评估 OpenXR Composition Layers / `PXR_Overlay`；世界空间锚点及关联 UI 建议保持在距头部 `≤ 3.0m` 稳定范围；MR 彩透显式核对相机清除颜色（Alpha=0）与底板不透明度 | 忽略相机背景 Alpha 导致透视黑屏；只测手柄射线漏测眼动/裸手切换；锚点过远导致追踪漂移 |
+| **Meta Quest（OpenXR / Meta XR SDK）** | 避开 `0.50–0.80m` 中距交互歧义带（直触 `< 0.46m`、射线 `≥ 1.0m`）；兼容手柄射线与裸手近/远捏合无缝切换；高可读曲面/平面菜单优先评估 `OVROverlayCanvas` / `OVRCanvasMeshRenderer`（严控单场景合成层数，上限 15 层）并核对深度遮挡与 Passthrough 合成顺序 | 裸手捏合微抖导致点击丢失；过量半透明叠层或无节制开启合成层导致带宽暴涨与热降频 |
+| **Apple visionOS（PolySpatial / 原生混合）** | 区分 Unity PolySpatial 托管空间（Bounded/Unbounded Volume）与原生 SwiftUI Window/Ornament 边界；遵循系统眼动 Hover 反馈、`60pt` 按钮中心距 / `16pt` 净间距及 Ornament 宽度不超主窗约束 | 在 PolySpatial 中假设自由任意自定义后处理模糊，或忽略眼动注视高亮与间距规范 |
+
+> 参考依据（核验日期 `2026-11-25`）：Unity XR Composition Layers（`com.unity.xr.compositionlayers`）、Meta Horizon OS Developer Documentation（`OVROverlay` / Distance Zones / Target Sizing）、PICO Developer Documentation（PICO OS 6 / Spatial Anchors / `PXR_Overlay`）与 Apple visionOS HIG。具体 API 以目标工程已安装 SDK 版本为准。
 
 ## 7. 真机验证与完成检查
 

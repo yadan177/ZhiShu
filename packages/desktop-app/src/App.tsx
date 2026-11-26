@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowClockwise, Cpu, Database, FolderSimple, SquaresFour } from "@phosphor-icons/react";
+import { ArrowClockwise, Cpu, Database, FolderSimple, GitDiff, SquaresFour } from "@phosphor-icons/react";
 import { AssetsPage } from "./AssetsPage";
 import { ZhiShuMark } from "./BrandIcons";
 import { APP_COPY, RULEPACK_BY_ID } from "./copy";
+import { EvolutionPage } from "./EvolutionPage";
 import { PreviewDialog } from "./PreviewDialog";
 import { ProjectRulesPage } from "./ProjectRulesPage";
 import { ProjectsPage } from "./ProjectsPage";
@@ -40,6 +41,7 @@ export function App() {
   const [softwareState, setSoftwareState] = useState<SoftwareUpdateState>();
   const [softwareBusy, setSoftwareBusy] = useState(false);
   const [softwareError, setSoftwareError] = useState("");
+  const [evolutionBadgeCount, setEvolutionBadgeCount] = useState(0);
   const unavailable = !window.zhishu;
 
   const enterpriseRequiredPacks = useMemo(() => {
@@ -90,6 +92,14 @@ export function App() {
       .catch(() => {
         // 未检测到默认开发规则仓库时保持官方源默认，用户仍可手动选择本地规则源。
       });
+    void desktop
+      .listEvolutionProposals()
+      .then((listed) => {
+        if (!cancelled) setEvolutionBadgeCount(listed.counts.badge);
+      })
+      .catch(() => {
+        // 收件箱初始化异常不阻塞项目管理主流程，切入规则进化页会完整报错。
+      });
     return () => {
       cancelled = true;
       unsubscribe();
@@ -127,7 +137,8 @@ export function App() {
       const kept = allowed ? merged.filter((id) => allowed.has(id)) : merged;
       return kept.length ? kept : ["common"];
     }
-    const kept = merged.filter((id) => RULEPACK_BY_ID[id]?.releasedInOfficial015);
+    // 官方源 v2.0.0 及以上已发布目录中全部 20 个规则包；仅过滤掉官方目录未收录的私有包 ID。
+    const kept = merged.filter((id) => Boolean(RULEPACK_BY_ID[id]));
     return kept.length ? kept : ["common"];
   }
 
@@ -427,12 +438,25 @@ export function App() {
               <span className="sidebar-nav-count">企业</span>
             )}
           </button>
+
+          <button
+            type="button"
+            className={`sidebar-nav-item${view === "evolution" ? " active" : ""}`}
+            disabled={busy}
+            onClick={() => navigateTo("evolution")}
+          >
+            <GitDiff size={17} aria-hidden="true" />
+            <span className="sidebar-nav-label">{APP_COPY.nav.evolution}</span>
+            {evolutionBadgeCount > 0 && (
+              <span className="sidebar-nav-count">{evolutionBadgeCount}</span>
+            )}
+          </button>
         </nav>
 
         <div className="sidebar-footer">
           <div className="version-card">
             <div className="version-card-row">
-              <span className="version-tag">v{softwareState?.currentVersion ?? "2.0.0"}</span>
+              <span className="version-tag">v{softwareState?.currentVersion ?? "2.1.0"}</span>
               {hasSoftwareUpdate && softwareState?.availableVersion && (
                 <span className="badge badge--brand">v{softwareState.availableVersion}</span>
               )}
@@ -522,6 +546,16 @@ export function App() {
             onSourcesChange={setSources}
             onChooseWorkspaceSource={chooseWorkspaceSource}
             onOpenAssets={() => navigateTo("assets")}
+          />
+        )}
+
+        {view === "evolution" && (
+          <EvolutionPage
+            api={window.zhishu}
+            sources={sources}
+            workspaceSource={workspaceSource}
+            onBadgeCountChange={setEvolutionBadgeCount}
+            onOpenProjects={() => navigateTo("projects")}
           />
         )}
       </main>

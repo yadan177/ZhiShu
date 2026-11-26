@@ -3,6 +3,7 @@ export * from "./assets.js";
 export * from "./user-assets.js";
 export * from "./mcp.js";
 export * from "./sources.js";
+export * from "./evolution.js";
 export * from "./detect.js";
 export * from "./project.js";
 export * from "./release.js";

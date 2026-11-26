@@ -3,7 +3,7 @@ name: unity-doc-sync
 description: 用于在 Unity 项目新增模块、调整架构、修改场景/资源加载链路或升级关键依赖后，按项目文档规范增量同步技术总览、系统架构图、关键时序图、类与模块索引及构建验证说明。当 Unity 研发需要补写或同步项目技术文档时使用；不用于编写产品 PRD 或 UI 视觉文档。
 metadata:
   title: Unity 技术文档同步
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common

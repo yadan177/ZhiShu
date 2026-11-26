@@ -3,7 +3,7 @@ name: pm-flowchart-swimlane
 description: 用于将业务需求、用户操作路径、审批流或双端/多角色协同流程绘制为规范的业务流程图与跨端泳道图（Mermaid / 结构化步骤表），明确起点、判断分支、职责交接与异常回退路径。当产品经理需要单独画业务流程图、画前后端/客户端-服务端泳道图或评审流程断点时使用；不用于画静态产品功能结构树或底层类关系图。
 metadata:
   title: 业务流程图与泳道图生成
-  version: "2.0.0"
+  version: "2.1.0"
   role: product-pm
   rulepacks:
     - common

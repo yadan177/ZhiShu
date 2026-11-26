@@ -3,7 +3,7 @@ name: ui-requirement-states
 description: 用于将 PRD 或功能描述拆解为完整的页面清单、信息层级、控件交互状态与边界态矩阵（空态/加载/错误/禁用/超长文本/权限受限）。当用户开始新页面设计前梳理界面需求与全状态覆盖时使用；不用于输出最终高保真视觉样式或前端代码实现。
 metadata:
   title: 界面需求与状态梳理
-  version: "2.0.0"
+  version: "2.1.0"
   role: ui-design
   rulepacks:
     - common

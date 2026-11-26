@@ -3,7 +3,7 @@ name: unity-code-review
 description: 用于按 Unity C# 工程规范审查脚本变更，重点排查每帧热路径 GC 分配、生命周期与事件解绑泄漏、异步/协程销毁安全、资源加载句柄释放、网络与安全隐患及代码结构耦合。当 Unity 研发提交 PR 自检、代码评审或审查复杂组件脚本时使用。
 metadata:
   title: Unity 代码规范审查
-  version: "2.0.0"
+  version: "2.1.0"
   role: unity-dev
   rulepacks:
     - common

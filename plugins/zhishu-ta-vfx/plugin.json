@@ -1,7 +1,7 @@
 {
   "name": "zhishu-ta-vfx",
   "displayName": "技术美术（TA）",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "面向 Unity URP 与移动 XR 渲染管线的特效性能体检、Shader 审查与变体裁剪、材质与合批规范检查、资产导入校验脚本生成与真机剖析报告技能套件。",
   "author": {
     "name": "智枢官方"

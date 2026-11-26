@@ -9,6 +9,7 @@ export const APP_COPY = {
     assets: "插件与技能",
     tools: "AI 工具",
     sources: "来源管理",
+    evolution: "规则进化",
   },
   actions: {
     addProject: "添加项目",
@@ -32,6 +33,23 @@ export const APP_COPY = {
     downloadUpdate: "下载新版",
     restartUpdate: "重启更新",
     retryUpdate: "重试更新",
+    importProposal: "导入提案",
+    manageWatchSources: "管理巡检源",
+    scanOverrides: "扫描本地覆盖",
+    watchDocs: "巡检官方文档",
+    cancelWatch: "取消巡检",
+    retryFailedSources: "重试失败源",
+    reviewProposal: "查看审阅",
+    rejectShort: "驳回",
+    rejectProposal: "驳回提案",
+    exportPatch: "导出补丁",
+    recheckProposal: "重新检测",
+    previewDelta: "查看变更",
+    confirmWrite: "确认写入",
+    saveConfig: "保存配置",
+    addWatchSource: "添加巡检源",
+    resetFilters: "重置筛选",
+    goToProjects: "前往我的项目",
   },
   modes: {
     install: "配置与安装",
@@ -105,7 +123,6 @@ export interface RulePackMeta {
   group: RulePackGroupId;
   kind: "common" | "development" | "documentation";
   dependencies: readonly string[];
-  releasedInOfficial015: boolean;
 }
 
 export const RULEPACK_GROUPS: readonly { id: RulePackGroupId; title: string }[] = [
@@ -118,26 +135,26 @@ export const RULEPACK_GROUPS: readonly { id: RulePackGroupId; title: string }[] 
 ];
 
 export const RULEPACK_CATALOG: readonly RulePackMeta[] = [
-  { id: "common", name: "通用工程规则", group: "base", kind: "common", dependencies: [], releasedInOfficial015: true },
-  { id: "xr-common", name: "XR 空间通用基准", group: "base", kind: "common", dependencies: ["common"], releasedInOfficial015: false },
-  { id: "product-pm", name: "产品经理规则", group: "product-ui", kind: "common", dependencies: ["common"], releasedInOfficial015: false },
-  { id: "ui-design", name: "UI 设计规则（含 XR）", group: "product-ui", kind: "common", dependencies: ["common", "project-docs/ui-design"], releasedInOfficial015: false },
-  { id: "project-docs/ui-design", name: "UI 设计文档规则", group: "product-ui", kind: "documentation", dependencies: ["common"], releasedInOfficial015: false },
-  { id: "3d-art", name: "三维美术规范（含图生 3D）", group: "art-ta", kind: "common", dependencies: ["common"], releasedInOfficial015: false },
-  { id: "ta-vfx-shader", name: "TA 特效与 Shader 规范", group: "art-ta", kind: "development", dependencies: ["common"], releasedInOfficial015: false },
-  { id: "unity", name: "Unity 开发规则", group: "unity-xr", kind: "development", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "pico", name: "PICO Unity SDK 规则", group: "unity-xr", kind: "development", dependencies: ["common", "unity"], releasedInOfficial015: true },
-  { id: "project-docs/unity", name: "Unity 文档规则", group: "unity-xr", kind: "documentation", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "javascript", name: "JavaScript 开发规则", group: "fullstack", kind: "development", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "typescript", name: "TypeScript 开发规则", group: "fullstack", kind: "development", dependencies: ["common", "javascript"], releasedInOfficial015: true },
-  { id: "project-docs/js-ts", name: "JS/TS 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "go", name: "Go 开发规则", group: "fullstack", kind: "development", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "project-docs/go", name: "Go 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "java", name: "Java 开发规则", group: "fullstack", kind: "development", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "project-docs/java", name: "Java 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "python", name: "Python 开发规则", group: "fullstack", kind: "development", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "project-docs/python", name: "Python 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"], releasedInOfficial015: true },
-  { id: "rule-authoring", name: "规则正文编写规范", group: "meta", kind: "common", dependencies: ["common"], releasedInOfficial015: true },
+  { id: "common", name: "通用工程规则", group: "base", kind: "common", dependencies: [] },
+  { id: "xr-common", name: "XR 空间通用基准", group: "base", kind: "common", dependencies: ["common"] },
+  { id: "product-pm", name: "产品经理规则", group: "product-ui", kind: "common", dependencies: ["common"] },
+  { id: "ui-design", name: "UI 设计规则（含 XR）", group: "product-ui", kind: "common", dependencies: ["common", "project-docs/ui-design"] },
+  { id: "project-docs/ui-design", name: "UI 设计文档规则", group: "product-ui", kind: "documentation", dependencies: ["common"] },
+  { id: "3d-art", name: "三维美术规范（含图生 3D）", group: "art-ta", kind: "common", dependencies: ["common"] },
+  { id: "ta-vfx-shader", name: "TA 特效与 Shader 规范", group: "art-ta", kind: "development", dependencies: ["common"] },
+  { id: "unity", name: "Unity 开发规则", group: "unity-xr", kind: "development", dependencies: ["common"] },
+  { id: "pico", name: "PICO Unity SDK 规则", group: "unity-xr", kind: "development", dependencies: ["common", "unity"] },
+  { id: "project-docs/unity", name: "Unity 文档规则", group: "unity-xr", kind: "documentation", dependencies: ["common"] },
+  { id: "javascript", name: "JavaScript 开发规则", group: "fullstack", kind: "development", dependencies: ["common"] },
+  { id: "typescript", name: "TypeScript 开发规则", group: "fullstack", kind: "development", dependencies: ["common", "javascript"] },
+  { id: "project-docs/js-ts", name: "JS/TS 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"] },
+  { id: "go", name: "Go 开发规则", group: "fullstack", kind: "development", dependencies: ["common"] },
+  { id: "project-docs/go", name: "Go 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"] },
+  { id: "java", name: "Java 开发规则", group: "fullstack", kind: "development", dependencies: ["common"] },
+  { id: "project-docs/java", name: "Java 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"] },
+  { id: "python", name: "Python 开发规则", group: "fullstack", kind: "development", dependencies: ["common"] },
+  { id: "project-docs/python", name: "Python 文档规则", group: "fullstack", kind: "documentation", dependencies: ["common"] },
+  { id: "rule-authoring", name: "规则正文编写规范", group: "meta", kind: "common", dependencies: ["common"] },
 ];
 
 export const RULEPACK_BY_ID: Record<string, RulePackMeta> = Object.fromEntries(

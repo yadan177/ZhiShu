@@ -3,7 +3,7 @@ name: ui-design-system-setup
 description: 用于建立或梳理统一的设计语言、语义化设计令牌（颜色/字阶/间距/圆角/阴影/层级）、图标规范与可复用核心组件变体规范。当用户从零搭建设计系统、统一多页视觉风格、整理 CSS/Figma Variables 令牌或梳理组件规范时使用；不用于编写具体业务接口逻辑。
 metadata:
   title: 视觉风格与设计系统搭建
-  version: "2.0.0"
+  version: "2.1.0"
   role: ui-design
   rulepacks:
     - common

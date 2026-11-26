@@ -3,7 +3,7 @@ name: ui-wireframe-layout
 description: 用于产出低/中保真交互线框结构、信息分区、网格布局比例、导航跳转关系与弹层/抽屉承载方案。当用户需要规划页面布局骨架、比较导航方案、设计复杂工作台或梳理多页交互流转时使用；不用于微调颜色/阴影等视觉细节。
 metadata:
   title: 交互线框与布局方案
-  version: "2.0.0"
+  version: "2.1.0"
   role: ui-design
   rulepacks:
     - common

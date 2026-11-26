@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zhishu.dev/schemas/evolution.schema.json",
+  "title": "ZhiShu Rule & Skill Evolution Proposal",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "channel",
+    "targetKind",
+    "operation",
+    "status",
+    "title",
+    "targetPath",
+    "anchorHeading",
+    "evidence",
+    "fingerprint",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$" },
+    "channel": { "enum": ["session-capture", "overrides-promotion", "docs-watch"] },
+    "targetKind": { "enum": ["rule", "skill"] },
+    "operation": { "enum": ["add-item", "update-item", "deprecate-item"] },
+    "status": { "enum": ["pending", "conflict", "stale", "approved", "rejected", "archived"] },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "summary": { "type": "string", "maxLength": 600 },
+    "targetRulepack": { "type": "string", "pattern": "^[a-z0-9][a-z0-9/-]{0,63}$" },
+    "targetPath": { "type": "string", "pattern": "^(rulepacks|plugins)/.+\\.md$" },
+    "anchorHeading": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "beforeSnippet": { "type": "string" },
+    "afterSnippet": { "type": "string" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["sourceLabel", "summary"],
+        "properties": {
+          "sourceLabel": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 1200 },
+          "url": { "type": "string", "pattern": "^https://" },
+          "verifiedAt": { "type": "string" },
+          "projectNames": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "targetBaseDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "createdAt": { "type": "string" },
+    "updatedAt": { "type": "string" },
+    "lastCheckedAt": { "type": "string" },
+    "rejectionReason": { "type": "string", "maxLength": 300 },
+    "conflictMessages": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "appliedReceipt": {
+      "type": "object",
+      "required": ["sourceId", "sourceName", "targetFilePath", "appliedAt", "beforeDigest", "afterDigest", "validated"],
+      "properties": {
+        "sourceId": { "type": "string", "minLength": 1 },
+        "sourceName": { "type": "string", "minLength": 1 },
+        "targetFilePath": { "type": "string", "minLength": 1 },
+        "appliedAt": { "type": "string" },
+        "beforeDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "afterDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "validated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "watchSource": {
+      "title": "ZhiShu Official Documentation Watch Source",
+      "type": "object",
+      "required": ["schemaVersion", "id", "name", "url", "targetRulepack", "targetPath", "keywords", "enabled"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "url": { "type": "string", "pattern": "^https://" },
+        "targetRulepack": { "type": "string", "pattern": "^[a-z0-9][a-z0-9/-]{0,63}$" },
+        "targetPath": { "type": "string", "pattern": "^(rulepacks|plugins)/.+\\.md$" },
+        "anchorHeading": { "type": "string", "maxLength": 200 },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "enabled": { "type": "boolean" },
+        "lastCheckedAt": { "type": "string" },
+        "lastStatus": { "enum": ["ok", "error"] },
+        "lastMessage": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
