@@ -321,7 +321,16 @@ test("GitHub 网络请求具备瞬态单次重试、超时/限流友好提示与
   const timeoutFetcher = createResilientFetcher(async (_url, init) => {
     timeoutAttempts++;
     return await new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("TimeoutError")), { once: true });
+      // Node 22 中 AbortSignal.timeout() 内部计时器默认 unref，需挂接可清理的 ref 计时器防止测试事件循环提前退出
+      const keepAlive = setTimeout(() => reject(new Error("fallback timeout")), 5000);
+      init?.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(keepAlive);
+          reject(init.signal?.reason ?? new Error("TimeoutError"));
+        },
+        { once: true },
+      );
     });
   }, 5);
   await assert.rejects(
