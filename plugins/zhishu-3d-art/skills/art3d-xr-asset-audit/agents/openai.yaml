@@ -1,0 +1,6 @@
+interface:
+  display_name: "XR 模型与贴图规范体检"
+  short_description: "用于对照 XR 性能预算与实时 3D 资产规范，全面体检模型面数、LOD 梯度、材质球数量、U…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#0284C7"

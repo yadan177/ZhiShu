@@ -1,0 +1,6 @@
+interface:
+  display_name: "XR 空间界面布局设计"
+  short_description: "用于 UI 设计师正向设计 VR/MR/AR 空间界面的布局拓扑与摆放架构，涵盖单窗/折角侧翼…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#E11D48"

@@ -1,0 +1,6 @@
+interface:
+  display_name: "XR 真机性能排障"
+  short_description: "用于系统化定位与解决 Unity / XR 应用在真机上出现的掉帧卡顿、GC 尖刺、画面抖动、…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

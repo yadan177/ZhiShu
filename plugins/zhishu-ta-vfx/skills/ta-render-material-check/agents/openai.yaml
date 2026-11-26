@@ -1,0 +1,6 @@
+interface:
+  display_name: "渲染管线与材质规范检查"
+  short_description: "用于检查 Unity URP 渲染管线配置、光照烘焙策略、阴影与后处理预算、材质球合批（SRP…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#6D28D9"

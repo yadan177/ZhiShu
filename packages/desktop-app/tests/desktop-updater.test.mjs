@@ -15,6 +15,8 @@ const {
   resolveMacAppTarget,
   verifyInstallerBeforeLaunch,
 } = require("../build/desktop-updater.cjs");
+const { fetchDesktopRelease } = require("../build/desktop-releases.cjs");
+const { createResilientFetcher, formatGitHubNetworkError } = require("../build/resilient-fetch.cjs");
 
 const sha256Hex = (data) => createHash("sha256").update(data).digest("hex");
 
@@ -269,4 +271,78 @@ test("macOS 目标应用目录安全判定与原子替换辅助脚本生成", { 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("GitHub 网络请求具备瞬态单次重试、超时/限流友好提示与取消透传", async () => {
+  // 1. HTTP 503 瞬态故障自动重试一次并成功
+  let http503Attempts = 0;
+  const retry503 = createResilientFetcher(async () => {
+    http503Attempts++;
+    if (http503Attempts === 1) return new Response("unavailable", { status: 503 });
+    return new Response("ok", { status: 200 });
+  }, 5);
+  const res1 = await retry503("https://api.github.com/repos/yadan177/ZhiShu/releases");
+  assert.equal(res1.status, 200);
+  assert.equal(http503Attempts, 2);
+
+  // 2. 瞬态网络波动（fetch failed）自动重试一次并成功
+  let netAttempts = 0;
+  const retryNet = createResilientFetcher(async () => {
+    netAttempts++;
+    if (netAttempts === 1) throw new TypeError("fetch failed");
+    return new Response("recovered", { status: 200 });
+  }, 5);
+  const res2 = await retryNet("https://api.github.com/repos/yadan177/ZhiShu/releases");
+  assert.equal(await res2.text(), "recovered");
+  assert.equal(netAttempts, 2);
+
+  // 3. 连续失败转换为可读中文网络提示
+  let alwaysFailAttempts = 0;
+  const alwaysFail = createResilientFetcher(async () => {
+    alwaysFailAttempts++;
+    throw new TypeError("fetch failed");
+  }, 5);
+  await assert.rejects(() => alwaysFail("https://api.github.com/test"), /无法连接 GitHub/);
+  assert.equal(alwaysFailAttempts, 2);
+
+  // 4. 用户主动取消不重试、直接透传中断
+  const controller = new AbortController();
+  controller.abort();
+  let cancelAttempts = 0;
+  const cancelFetcher = createResilientFetcher(async () => {
+    cancelAttempts++;
+    return new Response("should not run");
+  }, 5);
+  await assert.rejects(() => cancelFetcher("https://api.github.com/test", { signal: controller.signal }), /请求已取消/);
+  assert.equal(cancelAttempts, 0);
+
+  // 5. AbortSignal.timeout 超时不重试，输出友好中文超时提示
+  let timeoutAttempts = 0;
+  const timeoutFetcher = createResilientFetcher(async (_url, init) => {
+    timeoutAttempts++;
+    return await new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("TimeoutError")), { once: true });
+    });
+  }, 5);
+  await assert.rejects(
+    () => timeoutFetcher("https://api.github.com/test", { signal: AbortSignal.timeout(20) }),
+    /连接 GitHub 超时/,
+  );
+  assert.equal(timeoutAttempts, 1);
+
+  // 6. formatGitHubNetworkError 覆盖超时与代理错误
+  assert.match(formatGitHubNetworkError(new Error("net::ERR_PROXY_CONNECTION_FAILED")).message, /无法连接 GitHub/);
+  assert.match(formatGitHubNetworkError(new Error("net::ERR_TIMED_OUT")).message, /连接 GitHub 超时/);
+
+  // 7. fetchDesktopRelease 遇到 GitHub API 403 限流返回明确中文提示
+  await assert.rejects(
+    () =>
+      fetchDesktopRelease("darwin", "arm64", async () =>
+        new Response("rate limited", {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "0" },
+        }),
+      ),
+    /请求频率受限/,
+  );
 });

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Shader 代码审查与优化"
+  short_description: "用于审查与优化 Unity HLSL / ShaderLab / Shader Graph 代…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#6D28D9"

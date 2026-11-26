@@ -1,0 +1,6 @@
+interface:
+  display_name: "XR 空间界面规范检查"
+  short_description: "用于专项审查既有 VR/MR/AR 空间界面的视距、视野角、多窗拓扑与折角布局、Yaw-onl…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#E11D48"

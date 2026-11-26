@@ -1,0 +1,6 @@
+interface:
+  display_name: "数据库与迁移变更检查"
+  short_description: "用于审查关系型/文档型数据库 Schema 变更、SQL 迁移脚本、本地配置/锁文件 sche…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Unity 资产导入校验脚本生成"
+  short_description: "用于编写可配置、非破坏性的 Unity Editor 资产导入校验脚本（AssetPostpr…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#6D28D9"

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="4"/>
+  <g transform="translate(40 40) scale(3.6667)">
+<defs>
+      <linearGradient id="zhishu_pm_pb" x1="12" y1="6" x2="36" y2="38" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#34D399"/>
+        <stop offset="100%" stop-color="#059669"/>
+      </linearGradient>
+      <linearGradient id="zhishu_pm_pf" x1="8" y1="12" x2="34" y2="42" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#10B981"/>
+        <stop offset="100%" stop-color="#047857"/>
+      </linearGradient>
+    </defs>
+    <rect x="14" y="6" width="24" height="30" rx="5.5" fill="url(#zhishu_pm_pb)" opacity="0.34"/>
+    <rect x="9" y="10" width="26" height="32" rx="6" fill="url(#zhishu_pm_pf)"/>
+    <rect x="15" y="17" width="14" height="3.2" rx="1.6" fill="#FFFFFF"/>
+    <rect x="15" y="23.5" width="10" height="3" rx="1.5" fill="#A7F3D0"/>
+    <rect x="15" y="29.8" width="14" height="3" rx="1.5" fill="#A7F3D0"/>
+    <circle cx="35.5" cy="34.5" r="7.5" fill="#FFFFFF"/>
+    <circle cx="35.5" cy="34.5" r="5.6" fill="#0D9488"/>
+    <path d="M32.8 34.6L34.7 36.5L38.4 32.6" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

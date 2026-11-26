@@ -1,0 +1,6 @@
+interface:
+  display_name: "接口契约与前后端联调核对"
+  short_description: "用于在双端或跨服务接口开发与联调期间，核对 OpenAPI / Protobuf / Type…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

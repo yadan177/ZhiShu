@@ -1,0 +1,6 @@
+interface:
+  display_name: "FBX / glTF 导出校验"
+  short_description: "用于在 Blender、Maya 或 3ds Max 导出 FBX / glTF / GLB …"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#0284C7"

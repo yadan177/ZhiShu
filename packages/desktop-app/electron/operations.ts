@@ -68,9 +68,9 @@ type LoadedSource = { snapshot: SourceSnapshot; cleanup: () => Promise<void> };
 type SourceLoader = (release?: ReleaseInfo) => Promise<LoadedSource>;
 type ReleaseLoader = (repository: string) => Promise<ReleaseInfo>;
 
-async function loadLatestSource(release?: ReleaseInfo): Promise<LoadedSource> {
-  release ??= await findLatestRelease(REPOSITORY);
-  const downloaded = await downloadRulepacks(release);
+export async function loadLatestSource(release?: ReleaseInfo, fetcher: typeof fetch = fetch): Promise<LoadedSource> {
+  release ??= await findLatestRelease(REPOSITORY, fetcher);
+  const downloaded = await downloadRulepacks(release, fetcher);
   return {
     snapshot: {
       root: downloaded.sourceRoot,

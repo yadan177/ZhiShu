@@ -1,0 +1,6 @@
+interface:
+  display_name: "自动化测试生成"
+  short_description: "用于依据项目既有测试框架（如 Node 原生 node:test、Go testing、JUn…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import path from "node:path";
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { DesktopOperations, STACK_PACKS, inspectProjectRoot, inspectWorkspaceSource } from "./operations.ts";
+import { DesktopOperations, STACK_PACKS, inspectProjectRoot, inspectWorkspaceSource, loadLatestSource } from "./operations.ts";
 import type { InstallRequest, PlatformChoice, RuleSourceChoice, StackChoice } from "./operations.ts";
 import { ProjectRegistry } from "./project-registry.ts";
 import { PluginLibrary } from "./plugin-library.ts";
@@ -12,15 +12,20 @@ import { SourceManager, type AddSourceInput, type TestSourceInput } from "./sour
 import { EvolutionOperations } from "./evolution-operations.ts";
 import { ToolInspector } from "./tool-inspector.ts";
 import { SoftwareUpdateService } from "./software-update.ts";
-import type {
-  EvolutionPatchEdit,
-  EvolutionTargetSource,
-  McpServerDefinition,
-  McpToolId,
-  WatchSourceConfig,
+import { electronFetch } from "./electron-fetch.ts";
+import {
+  findLatestRelease,
+  type EvolutionPatchEdit,
+  type EvolutionTargetSource,
+  type McpServerDefinition,
+  type McpToolId,
+  type WatchSourceConfig,
 } from "../../core/src/index.ts";
 
-const operations = new DesktopOperations();
+const operations = new DesktopOperations(
+  (release) => loadLatestSource(release, electronFetch),
+  (repo) => findLatestRelease(repo, electronFetch),
+);
 app.setName("智枢");
 let window: BrowserWindow | undefined;
 let selectedProject: string | undefined;
@@ -45,7 +50,7 @@ if (rawDevProfile) {
 }
 const softwareUpdate = new SoftwareUpdateService((state) => {
   if (window && !window.isDestroyed()) window.webContents.send("software-update:state", state);
-});
+}, electronFetch);
 
 function requireProject(): string {
   if (!selectedProject) throw new Error("请先选择项目文件夹");
@@ -586,7 +591,7 @@ if (!app.requestSingleInstanceLock()) {
     );
     mcpOperations = new McpOperations(path.join(app.getPath("userData"), "mcp-assets"), profilePaths);
     toolInspector = new ToolInspector(profilePaths);
-    sourceManager = new SourceManager(path.join(app.getPath("userData"), "sources"));
+    sourceManager = new SourceManager(path.join(app.getPath("userData"), "sources"), electronFetch);
     evolutionOperations = new EvolutionOperations(path.join(app.getPath("userData"), "evolution"), {
       registry,
       sourceManager,

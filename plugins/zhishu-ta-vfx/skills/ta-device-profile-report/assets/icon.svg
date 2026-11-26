@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="4"/>
+  <g transform="translate(40 40) scale(3.6667)">
+<defs>
+      <linearGradient id="zhishu_ta_tm" x1="10" y1="7" x2="36" y2="41" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#A855F7"/>
+        <stop offset="55%" stop-color="#6D28D9"/>
+        <stop offset="100%" stop-color="#4338CA"/>
+      </linearGradient>
+      <linearGradient id="zhishu_ta_th" x1="22" y1="6" x2="29" y2="25" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#E9D5FF"/>
+        <stop offset="100%" stop-color="#8B5CF6"/>
+      </linearGradient>
+      <linearGradient id="zhishu_ta_ts" x1="33" y1="8" x2="43" y2="18" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#22D3EE"/>
+        <stop offset="100%" stop-color="#3B82F6"/>
+      </linearGradient>
+    </defs>
+    <path d="M22.5 6.5C24.2 16.6 28.4 20.8 38.5 22.5C28.4 24.2 24.2 28.4 22.5 38.5C20.8 28.4 16.6 24.2 6.5 22.5C16.6 20.8 20.8 16.6 22.5 6.5Z" fill="url(#zhishu_ta_tm)"/>
+    <path d="M22.5 6.5C24.2 16.6 28.4 20.8 38.5 22.5H22.5V6.5Z" fill="url(#zhishu_ta_th)" opacity="0.65"/>
+    <path d="M37.5 7.2L39.0 11.2L43.0 12.7L39.0 14.2L37.5 18.2L36.0 14.2L32.0 12.7L36.0 11.2L37.5 7.2Z" fill="url(#zhishu_ta_ts)"/>
+    <circle cx="36.5" cy="36.5" r="3.2" fill="#818CF8"/>
+  </g>
+</svg>

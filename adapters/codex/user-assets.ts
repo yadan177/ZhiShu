@@ -12,6 +12,67 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function normalizeCodexRelative(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return trimmed.startsWith("./") ? trimmed : `./${trimmed}`;
+}
+
+/**
+ * 为 Codex 原生插件交付补齐 `.codex-plugin/plugin.json`：
+ * 实测 Codex CLI / Desktop 仅解析 `.codex-plugin/plugin.json` 中的 `interface` 元数据（含 logo / composerIcon / displayName / brandColor）。
+ * 若源包已携带 `.codex-plugin/plugin.json` 则原样保留；若仅有根级 `plugin.json` 则在交付时合成标准 Codex 清单，不污染源包。
+ */
+export function prepareCodexPluginFiles(sourceFiles: Map<string, Buffer>): Map<string, Buffer> {
+  const result = new Map(sourceFiles);
+  if (result.has(".codex-plugin/plugin.json")) return result;
+  const rootBytes = result.get("plugin.json");
+  if (!rootBytes) return result;
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(rootBytes.toString("utf8"));
+  } catch {
+    return result;
+  }
+  if (!isRecord(manifest)) return result;
+
+  const rawInterface = isRecord(manifest.interface) ? manifest.interface : {};
+  const displayName =
+    (typeof rawInterface.displayName === "string" && rawInterface.displayName.trim()) ||
+    (typeof manifest.displayName === "string" && manifest.displayName.trim()) ||
+    (typeof manifest.name === "string" ? manifest.name : undefined);
+  const logo = normalizeCodexRelative(rawInterface.logo ?? manifest.logo);
+  const composerIcon = normalizeCodexRelative(rawInterface.composerIcon ?? rawInterface.logo ?? manifest.logo);
+  const developerName =
+    (typeof rawInterface.developerName === "string" && rawInterface.developerName.trim()) ||
+    (isRecord(manifest.author) && typeof manifest.author.name === "string" && manifest.author.name.trim()) ||
+    (typeof manifest.author === "string" && manifest.author.trim()) ||
+    undefined;
+  const defaultPrompt = Array.isArray(rawInterface.defaultPrompt)
+    ? rawInterface.defaultPrompt
+    : Array.isArray(manifest.suggestedPrompts)
+      ? manifest.suggestedPrompts
+      : undefined;
+
+  const codexInterface: Record<string, unknown> = {
+    ...rawInterface,
+    ...(displayName ? { displayName } : {}),
+    ...(developerName ? { developerName } : {}),
+    ...(logo ? { logo } : {}),
+    ...(composerIcon ? { composerIcon } : {}),
+    ...(defaultPrompt ? { defaultPrompt } : {}),
+  };
+
+  const codexManifest: Record<string, unknown> = {
+    ...manifest,
+    skills: normalizeCodexRelative(manifest.skills) ?? "./skills/",
+    interface: codexInterface,
+  };
+  result.set(".codex-plugin/plugin.json", Buffer.from(`${JSON.stringify(codexManifest, null, 2)}\n`));
+  return result;
+}
+
 export function codexMcpConfigPath(codexHome: string): string {
   return path.join(codexHome, "config.toml");
 }

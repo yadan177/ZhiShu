@@ -23,6 +23,33 @@ function isObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+async function checkIconAsset(baseDir, rawRelative, label) {
+  if (typeof rawRelative !== "string" || !rawRelative.trim()) {
+    errors.push(`${label}: 缺少图标路径声明`);
+    return;
+  }
+  const normalized = rawRelative.trim();
+  if (path.isAbsolute(normalized) || normalized.includes("..")) {
+    errors.push(`${label}: 图标路径必须位于目录内部 "${rawRelative}"`);
+    return;
+  }
+  const resolved = path.resolve(baseDir, normalized);
+  if (resolved !== baseDir && !resolved.startsWith(`${baseDir}${path.sep}`)) {
+    errors.push(`${label}: 图标路径越界 "${rawRelative}"`);
+    return;
+  }
+  try {
+    const stat = await lstat(resolved);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      errors.push(`${label}: 图标必须为普通文件，禁止符号链接 "${rawRelative}"`);
+    } else if (stat.size === 0) {
+      errors.push(`${label}: 图标文件不能为空 "${rawRelative}"`);
+    }
+  } catch {
+    errors.push(`${label}: 声明的图标文件不存在 "${rawRelative}"`);
+  }
+}
+
 const rulepackIds = await collectRulepackIds(rulepacksDir);
 const entries = await readdir(pluginsDir, { withFileTypes: true });
 const pluginDirs = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).sort((a, b) => a.name.localeCompare(b.name));
@@ -65,6 +92,16 @@ for (const dirEntry of pluginDirs) {
   }
   if (manifest.skills !== "./skills/") {
     errors.push(`${dirEntry.name}: skills 字段必须为 "./skills/"`);
+  }
+  await checkIconAsset(pluginRoot, manifest.logo, `${dirEntry.name}: plugin.json logo`);
+  if (!isObject(manifest.interface)) {
+    errors.push(`${dirEntry.name}: 缺少 interface 元数据块`);
+  } else {
+    await checkIconAsset(pluginRoot, manifest.interface.logo, `${dirEntry.name}: interface.logo`);
+    await checkIconAsset(pluginRoot, manifest.interface.composerIcon, `${dirEntry.name}: interface.composerIcon`);
+    if (typeof manifest.interface.brandColor !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(manifest.interface.brandColor)) {
+      errors.push(`${dirEntry.name}: interface.brandColor 必须为 6 位十六进制颜色值`);
+    }
   }
   if (!Array.isArray(manifest.ruleCategories) || manifest.ruleCategories.length === 0) {
     errors.push(`${dirEntry.name}: 缺少 ruleCategories`);
@@ -156,6 +193,26 @@ for (const dirEntry of pluginDirs) {
           errors.push(`${dirEntry.name}/${skillEntry.name}: SKILL.md 引用的本地文件不存在 "${raw}"`);
         }
       }
+    }
+
+    // 检查子技能的 Codex / TRAE 图标声明（agents/openai.yaml）
+    const agentMetaPath = path.join(skillDir, "agents", "openai.yaml");
+    try {
+      const agentStat = await lstat(agentMetaPath);
+      if (agentStat.isSymbolicLink() || !agentStat.isFile()) {
+        errors.push(`${dirEntry.name}/${skillEntry.name}: agents/openai.yaml 必须为普通文件`);
+      } else {
+        const agentMeta = parse(await readFile(agentMetaPath, "utf8"));
+        const agentInterface = isObject(agentMeta?.interface) ? agentMeta.interface : undefined;
+        if (!agentInterface || typeof agentInterface.display_name !== "string" || !agentInterface.display_name.trim()) {
+          errors.push(`${dirEntry.name}/${skillEntry.name}: agents/openai.yaml 缺少 interface.display_name`);
+        } else {
+          await checkIconAsset(skillDir, agentInterface.icon_small, `${dirEntry.name}/${skillEntry.name}: agents/openai.yaml icon_small`);
+          await checkIconAsset(skillDir, agentInterface.icon_large, `${dirEntry.name}/${skillEntry.name}: agents/openai.yaml icon_large`);
+        }
+      }
+    } catch {
+      errors.push(`${dirEntry.name}/${skillEntry.name}: 缺少 agents/openai.yaml 图标元数据`);
     }
 
     // 检查 scripts/ 子目录下所有文件均为普通非空文件（不允许符号链接）

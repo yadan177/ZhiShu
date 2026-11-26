@@ -194,15 +194,23 @@ export function ToolsPage({
       .sort((a, b) => compareSemver(a.version, b.version));
     const latestCandidate = candidates.at(-1);
     const hasNewerVersion = latestCandidate ? compareSemver(latestCandidate.version, item.version) > 0 : false;
+    const hasContentUpdate = Boolean(
+      !hasNewerVersion &&
+        latestCandidate &&
+        latestCandidate.version === item.version &&
+        item.sourceDigest &&
+        /^[a-f0-9]{64}$/.test(item.sourceDigest) &&
+        latestCandidate.sourceDigest !== item.sourceDigest,
+    );
     const isPreset = candidates.some((c) => c.preset) || (!item.sourceKey.startsWith("skill.") && sourceName.startsWith("zhishu-"));
-    return { item, candidates, latestCandidate, hasNewerVersion, isPreset };
+    return { item, candidates, latestCandidate, hasNewerVersion, hasContentUpdate, isPreset };
   });
 
   const conflictCount =
     enrichedAssets.filter(({ item }) => item.issues.length > 0).length +
     filteredMcps.filter((record) => record.issues.length > 0).length;
   const updatableCount = enrichedAssets.filter(
-    ({ item, hasNewerVersion }) => item.issues.length === 0 && hasNewerVersion,
+    ({ item, hasNewerVersion, hasContentUpdate }) => item.issues.length === 0 && (hasNewerVersion || hasContentUpdate),
   ).length;
   const totalVisibleCount = enrichedAssets.length + filteredMcps.length;
   const normalCount = Math.max(0, totalVisibleCount - conflictCount - updatableCount);
@@ -325,14 +333,20 @@ export function ToolsPage({
           </div>
         ) : (
           <div className="tool-asset-list">
-            {enrichedAssets.map(({ item, candidates, latestCandidate, hasNewerVersion, isPreset }) => {
+            {enrichedAssets.map(({ item, candidates, latestCandidate, hasNewerVersion, hasContentUpdate, isPreset }) => {
               const rowKey = `${item.target.ideId}:${item.id}`;
               const hasConflict = item.issues.length > 0;
               const isMultiVersion = candidates.length >= 2;
               const selectedVersionKey =
                 candidates.find((c) => c.key === updateKeys[rowKey])?.key ?? latestCandidate?.key ?? item.sourceKey;
               const selectedCandidate = candidates.find((c) => c.key === selectedVersionKey);
-              const selectedDiffers = Boolean(selectedCandidate && selectedCandidate.version !== item.version);
+              const selectedDiffers = Boolean(
+                selectedCandidate &&
+                  (selectedCandidate.version !== item.version ||
+                    (item.sourceDigest &&
+                      /^[a-f0-9]{64}$/.test(item.sourceDigest) &&
+                      selectedCandidate.sourceDigest !== item.sourceDigest)),
+              );
               const compactDest = formatCompactPath(item.destination);
               const subLineText = hasConflict
                 ? `${compactDest} · ${item.issues[0]}${item.issues.length > 1 ? `（共 ${item.issues.length} 项）` : ""}`
@@ -425,9 +439,11 @@ export function ToolsPage({
                           卸载
                         </button>
                       </>
-                    ) : hasNewerVersion && latestCandidate ? (
+                    ) : (hasNewerVersion || hasContentUpdate) && latestCandidate ? (
                       <>
-                        <span className="badge badge--brand">可更新至 v{latestCandidate.version}</span>
+                        <span className="badge badge--brand">
+                          {hasNewerVersion ? `可更新至 v${latestCandidate.version}` : "有内容更新"}
+                        </span>
                         {item.recognitionNote && <span className="badge badge--warning">已停用</span>}
                         <button
                           type="button"

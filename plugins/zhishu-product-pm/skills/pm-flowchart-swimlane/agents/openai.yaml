@@ -1,0 +1,6 @@
+interface:
+  display_name: "业务流程图与泳道图生成"
+  short_description: "用于将业务需求、用户操作路径、审批流或双端/多角色协同流程绘制为规范的业务流程图与跨端泳道图（…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"

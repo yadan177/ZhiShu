@@ -1,0 +1,6 @@
+interface:
+  display_name: "AI 生成模型修复与重拓扑"
+  short_description: "用于制定 AI 生成 3D 粗模（三角杂乱网格、高面数、碎片 UV、脏贴图）进入实时 Unit…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#0284C7"

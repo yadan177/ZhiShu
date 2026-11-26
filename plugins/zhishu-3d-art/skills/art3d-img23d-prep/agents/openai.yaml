@@ -1,0 +1,6 @@
+interface:
+  display_name: "图生 3D 提示词与参考图准备"
+  short_description: "用于在进入 Tripo、混元 3D、Hyper3D 等图生 3D 工具前，制定高质量输入参考图…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#0284C7"

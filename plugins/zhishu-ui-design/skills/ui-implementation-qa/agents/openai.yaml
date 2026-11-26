@@ -1,0 +1,6 @@
+interface:
+  display_name: "界面实现还原度验收"
+  short_description: "用于对照定稿设计稿、视觉规范与交互状态矩阵，对已实现的前端页面、桌面客户端或 Unity/XR…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#E11D48"

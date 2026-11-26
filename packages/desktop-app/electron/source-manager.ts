@@ -96,7 +96,10 @@ export class SourceManager {
   private readonly checkoutsRoot: string;
   private running = false;
 
-  constructor(private readonly stateRoot: string) {
+  constructor(
+    private readonly stateRoot: string,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {
     this.sourcesFile = path.join(stateRoot, "sources.json");
     this.secretsFile = path.join(stateRoot, "source-secrets.json");
     this.checkoutsRoot = path.join(stateRoot, "source-checkouts");
@@ -224,7 +227,7 @@ export class SourceManager {
 
   async testConnection(input: TestSourceInput): Promise<SourceTestResult> {
     if (input.access === "github-release") {
-      const release = await findLatestRelease(input.location);
+      const release = await findLatestRelease(input.location, this.fetcher);
       return { ok: true, message: `连接正常 · 最新版本 v${release.version}` };
     }
     if (input.access === "local") {
@@ -266,7 +269,7 @@ export class SourceManager {
   async sync(id: string): Promise<{ sources: AssetSourceRecord[]; message: string }> {
     return this.serialized(async () => {
       if (id === OFFICIAL_SOURCE_ID) {
-        const release = await findLatestRelease(OFFICIAL_SOURCE_RECORD.location);
+        const release = await findLatestRelease(OFFICIAL_SOURCE_RECORD.location, this.fetcher);
         return { sources: await this.list(), message: `官方源已检查 · 最新版本 v${release.version}` };
       }
       const existing = await this.loadStoredSources();

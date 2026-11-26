@@ -1,6 +1,6 @@
 # 智枢桌面版（ZhiShu Desktop）
 
-当前版本为 **`2.1.2`**（[desktop-v2.1.2](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.1.2)），搭配规则包 / CLI / 岗位插件 `v2.1.0` 双轨运行。采用左侧 5 模块架构（「我的项目 / 项目规则」「插件与技能」「AI 工具」「来源管理」「规则进化」），内置 6 大官方岗位插件（共 43 个 Skills）、飞书与自定义 MCP 脱敏配置、三级来源治理与三通道规则自动进化审批工作台。全应用界面文字采用操作系统默认无衬线字体（macOS 苹方 / Windows 微软雅黑），仅在代码与 Diff 预览框保留系统等宽字体。
+当前版本为 **`2.1.3`**（[desktop-v2.1.3](https://github.com/yadan177/ZhiShu/releases/tag/desktop-v2.1.3)），搭配规则包 / CLI / 岗位插件 `v2.1.0` 双轨运行。采用左侧 5 模块架构（「我的项目 / 项目规则」「插件与技能」「AI 工具」「来源管理」「规则进化」），内置 6 大官方岗位插件（共 43 个 Skills）、飞书与自定义 MCP 脱敏配置、三级来源治理与三通道规则自动进化审批工作台。全应用界面文字采用操作系统默认无衬线字体（macOS 苹方 / Windows 微软雅黑），仅在代码与 Diff 预览框保留系统等宽字体。
 
 ## 核心能力
 
@@ -22,6 +22,6 @@ npm run pack:mac --workspace zhishu-desktop
 npm run pack:win --workspace zhishu-desktop
 ```
 
-本机构建输出 `release/ZhiShu-Desktop-2.1.2-macOS-arm64.dmg` 或 `release/ZhiShu-Desktop-2.1.2-Windows-x64.exe`。开发期可通过 `ZHISHU_DEV_PROFILE=/tmp/zhishu-dev npm run dev --workspace zhishu-desktop` 在隔离数据目录验证而不影响本机正式配置。
+本机构建输出 `release/ZhiShu-Desktop-2.1.3-macOS-arm64.dmg` 或 `release/ZhiShu-Desktop-2.1.3-Windows-x64.exe`。开发期可通过 `ZHISHU_DEV_PROFILE=/tmp/zhishu-dev npm run dev --workspace zhishu-desktop` 在隔离数据目录验证而不影响本机正式配置。
 
 当前安装包尚未配置代码签名与 macOS 公证，首次打开时系统可能提示安全确认；桌面应用本身不会卸载电脑上的 CLI 或个人环境中的旧插件副本。Windows 实机交互、TraeWork 本地技能识别与 Qoder / Cursor / WorkBuddy 规则客户端加载仍待持续实测验收。

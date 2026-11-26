@@ -1,0 +1,6 @@
+interface:
+  display_name: "代码审查与风险排查"
+  short_description: "用于对 JavaScript/TypeScript、Go、Java 或 Python 代码变更…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

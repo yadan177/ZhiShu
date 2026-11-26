@@ -1,0 +1,6 @@
+interface:
+  display_name: "设计稿走查与研发交付"
+  short_description: "用于设计定稿后的全量走查、切图与图标资产导出核对（矢量 SVG / 位图倍率 / 9-Slic…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#E11D48"

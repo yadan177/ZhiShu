@@ -1,0 +1,6 @@
+interface:
+  display_name: "交互线框与布局方案"
+  short_description: "用于产出低/中保真交互线框结构、信息分区、网格布局比例、导航跳转关系与弹层/抽屉承载方案"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#E11D48"

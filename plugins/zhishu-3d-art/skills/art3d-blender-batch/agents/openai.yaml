@@ -1,0 +1,6 @@
+interface:
+  display_name: "Blender 批处理脚本生成"
+  short_description: "用于编写安全、可复现的 Blender Python (`bpy`) 批处理脚本，自动执行模型…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#0284C7"

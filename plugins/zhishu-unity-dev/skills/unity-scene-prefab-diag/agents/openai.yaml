@@ -1,0 +1,6 @@
+interface:
+  display_name: "场景与预制体诊断"
+  short_description: "用于诊断 Unity 场景文件（.unity）、预制体（.prefab）及配套 .meta 中…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

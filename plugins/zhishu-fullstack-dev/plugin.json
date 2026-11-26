@@ -7,9 +7,21 @@
     "name": "智枢官方"
   },
   "license": "Apache-2.0",
+  "logo": "assets/logo.svg",
   "skills": "./skills/",
   "interface": {
-    "displayName": "全栈开发工程师"
+    "displayName": "全栈开发工程师",
+    "shortDescription": "JS/TS/Go/Java/Python 全栈代码审查、契约核对、架构图与规则进化",
+    "developerName": "智枢官方",
+    "category": "Developer Tools",
+    "brandColor": "#1D4ED8",
+    "logo": "./assets/logo.svg",
+    "composerIcon": "./assets/logo.svg",
+    "defaultPrompt": [
+      "按当前仓库语言规范审查本次 PR Diff 的逻辑缺陷、安全风险与测试缺口",
+      "对照跨端接口契约核对前后端字段、时间格式、错误码与向下兼容性",
+      "同步更新本次改动涉及的技术文档架构图与 CHANGELOG 变更记录"
+    ]
   },
   "ruleCategories": [
     "common",

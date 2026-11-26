@@ -7,9 +7,21 @@
     "name": "智枢官方"
   },
   "license": "Apache-2.0",
+  "logo": "assets/logo.svg",
   "skills": "./skills/",
   "interface": {
-    "displayName": "技术美术（TA）"
+    "displayName": "技术美术（TA）",
+    "shortDescription": "Unity URP 与移动 XR 特效体检、Shader 审查、材质与性能剖析",
+    "developerName": "智枢官方",
+    "category": "Developer Tools",
+    "brandColor": "#6D28D9",
+    "logo": "./assets/logo.svg",
+    "composerIcon": "./assets/logo.svg",
+    "defaultPrompt": [
+      "审查这个 Shader 的 URP Single Pass Instanced 兼容、精度与关键字变体爆炸风险",
+      "体检这个 XR 粒子特效的 Overdraw、粒子数、透明裁剪与内存开销",
+      "编写一个 Unity AssetPostprocessor 导入自动校验脚本检查模型面数、贴图尺寸与音频设置"
+    ]
   },
   "ruleCategories": [
     "common",

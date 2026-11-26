@@ -1,5 +1,6 @@
 import skill from "./skills/toolbox-product-design/SKILL.md";
 import agent from "./skills/toolbox-product-design/agents/openai.yaml";
+import icon from "./skills/toolbox-product-design/assets/icon.svg";
 
 export const PRODUCT_DESIGN_SKILLS = ["audit", "design-qa", "get-context", "ideate", "image-to-code", "index", "research", "share", "url-to-code", "user-context"];
 export function productDesignDeliveryFiles(name: string, version: string, paths: Set<string>): Record<string, string> {
@@ -10,5 +11,5 @@ export function productDesignDeliveryFiles(name: string, version: string, paths:
   for (const file of ["references/communication-protocol.md", "references/critical-overrides.md"]) {
     if (!paths.has(file)) throw new Error(`源插件缺少引用：${file}`);
   }
-  return { "SKILL.md": skill, "agents/openai.yaml": agent };
+  return { "SKILL.md": skill, "agents/openai.yaml": agent, "assets/icon.svg": icon };
 }

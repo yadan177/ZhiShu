@@ -2006,13 +2006,41 @@ h3 {
   right: 20px;
   z-index: 25;
   max-width: min(400px, calc(100vw - 40px));
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   border: 1px solid var(--color-status-danger-bd);
   border-radius: var(--radius-md);
   background: var(--color-status-danger-bg);
   color: var(--color-status-danger-fg);
-  padding: 10px 14px;
+  padding: 10px 12px 10px 14px;
   box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
   font-size: 12px;
+  line-height: 18px;
+}
+
+.software-toast-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.software-toast-close {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--color-status-danger-fg);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+}
+
+.software-toast-close:hover {
+  opacity: 1;
+  background: rgba(220, 38, 38, 0.12);
 }
 
 @media (max-width: 820px) {

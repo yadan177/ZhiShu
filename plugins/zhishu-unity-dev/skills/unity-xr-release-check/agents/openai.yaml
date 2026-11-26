@@ -1,0 +1,6 @@
+interface:
+  display_name: "PICO / XR 打包发布前检查"
+  short_description: "用于在构建 PICO、Quest、OpenXR 或 Android/PCVR 正式发布包（AP…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

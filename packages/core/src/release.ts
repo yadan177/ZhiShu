@@ -70,7 +70,12 @@ async function findRelease(repository: string, endpoint: string, fetcher: typeof
     headers: { Accept: "application/vnd.github+json", "User-Agent": "ZhiShu" },
     signal: AbortSignal.timeout(15_000),
   });
-  if (!response.ok) throw new Error(`无法检查 GitHub Release：HTTP ${response.status}`);
+  if (!response.ok) {
+    if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") {
+      throw new Error("GitHub API 请求频率受限（每小时 60 次），请稍后重试或切换网络节点");
+    }
+    throw new Error(`无法检查 GitHub Release：HTTP ${response.status}`);
+  }
   const rawRelease: unknown = await response.json();
   if (!isRecord(rawRelease) || typeof rawRelease.tag_name !== "string") {
     throw new Error("GitHub Release 返回数据结构无效");

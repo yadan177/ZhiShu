@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2.1.3 (Desktop) - 2026-11-26
+
+### Fixed
+- **macOS Apple Silicon 安装包签名修复与门禁校验**：新增 [after-pack-mac-sign.cjs](packages/desktop-app/scripts/after-pack-mac-sign.cjs) 在未配置 Apple Developer ID 时执行完整 ad-hoc 深度重签，并在 [verify-update-assets.mjs](packages/desktop-app/scripts/verify-update-assets.mjs) 增加 `Contents/_CodeSignature/CodeResources` 与 `codesign --verify --deep --strict` 门禁，修复 `2.1.2` 下载安装后被 AppleSystemPolicy 拦截无法启动的问题。
+- **Antigravity / OpenAI Codex / TRAE 三端插件与 Skill 图标补全**：为 6 个内置官方岗位插件补齐 `assets/logo.svg`、`logo` 与 `interface` 元数据，为 43 个 Skills 补齐 `assets/icon.svg` 与 `agents/openai.yaml`；Codex 适配器自动补全 `.codex-plugin/plugin.json`；「AI 工具」页新增内容摘要比对支持同版本号一键更新。
+- **桌面端 GitHub 网络系统代理适配与瞬态重试**：新增 [resilient-fetch.ts](packages/desktop-app/electron/resilient-fetch.ts) 与 [electron-fetch.ts](packages/desktop-app/electron/electron-fetch.ts)，主进程全链路改走 Chromium `electron.net.fetch` / `electron.net.request` 自动继承系统代理与 PAC 配置，增加单次瞬态重试、超时控制与中文限流/代理错误提示。
+- **版本检查错误 Tips 自动消失与手动关闭**：[App.tsx](packages/desktop-app/src/App.tsx) 右下角 `.software-toast` 增加 6 秒自动消失计时与 `×` 关闭按钮，移除无可用更新时侧边栏重复残留的错误文本。
+
 ## 2.1.2 (Desktop) - 2026-11-26
 
 ### Added

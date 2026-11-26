@@ -7,9 +7,21 @@
     "name": "智枢官方"
   },
   "license": "Apache-2.0",
+  "logo": "assets/logo.svg",
   "skills": "./skills/",
   "interface": {
-    "displayName": "产品经理"
+    "displayName": "产品经理",
+    "shortDescription": "XR 与多端产品需求调研、结构图、PRD 编写与版本验收",
+    "developerName": "智枢官方",
+    "category": "Productivity",
+    "brandColor": "#059669",
+    "logo": "./assets/logo.svg",
+    "composerIcon": "./assets/logo.svg",
+    "defaultPrompt": [
+      "基于现有项目资料梳理本版本 PRD、核心状态流转与非目标范围",
+      "按标准层级生成本次需求的产品结构图大纲与 XMind/Mermaid 结构",
+      "对照 XR 体验红线排查这份需求的盲区并输出版本验收清单"
+    ]
   },
   "ruleCategories": [
     "common",

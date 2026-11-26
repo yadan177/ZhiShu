@@ -1,0 +1,6 @@
+interface:
+  display_name: "美术资产入库清单生成"
+  short_description: "用于为单批或整版本三维美术资产生成标准化的入库交接清单与资产台账（含名称、路径、面数、LOD、…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#0284C7"

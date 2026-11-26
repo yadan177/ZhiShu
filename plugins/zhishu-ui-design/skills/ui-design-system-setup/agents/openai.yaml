@@ -1,0 +1,6 @@
+interface:
+  display_name: "视觉风格与设计系统搭建"
+  short_description: "用于建立或梳理统一的设计语言、语义化设计令牌（颜色/字阶/间距/圆角/阴影/层级）、图标规范与…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#E11D48"

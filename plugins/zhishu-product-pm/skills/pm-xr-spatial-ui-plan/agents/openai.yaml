@@ -1,0 +1,6 @@
+interface:
+  display_name: "XR 空间界面规划"
+  short_description: "用于产品经理规划 VR/MR/AR 应用的空间界面摆放方案、视距分层（近距直触/中距主操作/远…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"

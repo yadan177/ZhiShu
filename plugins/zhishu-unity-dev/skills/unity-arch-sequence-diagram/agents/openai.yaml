@@ -1,0 +1,6 @@
+interface:
+  display_name: "Unity 架构与时序图生成"
+  short_description: "用于基于真实 Unity / XR 工程源码或技术方案，绘制清晰分层的 Unity 系统架构图…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

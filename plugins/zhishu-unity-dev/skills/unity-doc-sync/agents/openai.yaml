@@ -1,0 +1,6 @@
+interface:
+  display_name: "Unity 技术文档同步"
+  short_description: "用于在 Unity 项目新增模块、调整架构、修改场景/资源加载链路或升级关键依赖后，按项目文档…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

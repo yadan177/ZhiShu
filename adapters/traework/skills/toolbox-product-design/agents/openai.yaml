@@ -1,4 +1,7 @@
 interface:
   display_name: "Product Design · TraeWork"
   short_description: "Adapt Product Design workflows to TraeWork local tasks"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"
   default_prompt: "Use $toolbox-product-design to audit this product flow."

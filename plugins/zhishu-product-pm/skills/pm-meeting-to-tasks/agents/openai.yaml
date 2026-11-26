@@ -1,0 +1,6 @@
+interface:
+  display_name: "会议纪要转待办"
+  short_description: "用于将会议纪要、语音转写逐字稿、群聊讨论记录或评审反馈整理为结构化决策日志、分岗位待办任务清单…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"

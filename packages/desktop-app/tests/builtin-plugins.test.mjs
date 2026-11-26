@@ -125,11 +125,36 @@ test("Phase 4：内置岗位插件在 Antigravity 与 Codex 完成预览、安�
       ".gemini/config/plugins/zhishu-product-pm/skills/pm-prd-authoring/SKILL.md",
     );
     assert.match(await readFile(antigravitySkill, "utf8"), /PRD 需求文档编写/);
+    const agyManifest = JSON.parse(
+      await readFile(path.join(userHome, ".gemini/config/plugins/zhishu-product-pm/plugin.json"), "utf8"),
+    );
+    assert.equal(agyManifest.logo, "assets/logo.svg");
+    assert.match(
+      await readFile(path.join(userHome, ".gemini/config/plugins/zhishu-product-pm/assets/logo.svg"), "utf8"),
+      /<svg /,
+    );
 
     const installed = await assets.list();
     assert.equal(installed.length, 2);
-    assert.equal(installed.find((item) => item.target.ideId === "codex")?.recognition, "host-verified");
+    const codexInstalled = installed.find((item) => item.target.ideId === "codex");
+    assert.equal(codexInstalled?.recognition, "host-verified");
     assert.equal(installed.find((item) => item.target.ideId === "antigravity")?.recognition, "files-verified");
+
+    // 验证 Codex 交付自动合成 .codex-plugin/plugin.json 并完整传递图标与 interface 元数据。
+    const codexOverlay = JSON.parse(
+      await readFile(
+        path.join(codexInstalled.destination, "plugins/zhishu-product-pm/.codex-plugin/plugin.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(codexOverlay.interface?.displayName, "产品经理");
+    assert.equal(codexOverlay.interface?.logo, "./assets/logo.svg");
+    assert.equal(codexOverlay.interface?.composerIcon, "./assets/logo.svg");
+    assert.equal(codexOverlay.interface?.brandColor, "#059669");
+    assert.match(
+      await readFile(path.join(codexInstalled.destination, "plugins/zhishu-product-pm/assets/logo.svg"), "utf8"),
+      /<svg /,
+    );
 
     // 验证受管文件发生本地漂移时卸载预览会明确拦截。
     const original = await readFile(antigravitySkill, "utf8");
@@ -186,6 +211,14 @@ test("Phase 4：从岗位插件提取单个独立 Skill 导入后可在 4 类目
     assert.match(
       await readFile(path.join(userHome, ".trae-cn/skills/fs-api-contract-sync/SKILL.md"), "utf8"),
       /接口契约与前后端联调核对/,
+    );
+    assert.match(
+      await readFile(path.join(userHome, ".trae-cn/skills/fs-api-contract-sync/agents/openai.yaml"), "utf8"),
+      /icon_small: "\.\/assets\/icon\.svg"/,
+    );
+    assert.match(
+      await readFile(path.join(userHome, ".trae-cn/skills/fs-api-contract-sync/assets/icon.svg"), "utf8"),
+      /<svg /,
     );
 
     for (const ide of ["antigravity", "traework", "generic"]) {

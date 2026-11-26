@@ -1,0 +1,6 @@
+interface:
+  display_name: "需求自检与 XR 盲区排查"
+  short_description: "用于评审 PRD、交互方案或产品原型中的需求漏洞，特别是 VR/MR/AR 空间计算产品的眩晕…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"

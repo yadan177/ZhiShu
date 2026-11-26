@@ -1,0 +1,6 @@
+interface:
+  display_name: "组件与页面样式走查"
+  short_description: "用于走查 Web 或 Electron 桌面前端组件（React / Vue / CSS）的语…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

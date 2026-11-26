@@ -98,8 +98,13 @@ export function selectDesktopRelease(data: unknown, platform: NodeJS.Platform, a
 export async function fetchDesktopRelease(platform: NodeJS.Platform, arch: string, fetcher: typeof fetch = fetch): Promise<DesktopRelease | undefined> {
   const response = await fetcher(`https://api.github.com/repos/${repository}/releases?per_page=100`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "ZhiShu-Desktop" },
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(15000),
   });
-  if (!response.ok) throw new Error(`检查软件版本失败（HTTP ${response.status}）`);
+  if (!response.ok) {
+    if (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0") {
+      throw new Error("GitHub API 请求频率受限（每小时 60 次），请稍后重试或切换网络节点");
+    }
+    throw new Error(`检查软件版本失败（HTTP ${response.status}）`);
+  }
   return selectDesktopRelease(await response.json(), platform, arch);
 }

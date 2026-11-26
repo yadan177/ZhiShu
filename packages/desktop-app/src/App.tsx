@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowClockwise, Cpu, Database, FolderSimple, GitDiff, SquaresFour } from "@phosphor-icons/react";
+import { ArrowClockwise, Cpu, Database, FolderSimple, GitDiff, SquaresFour, X } from "@phosphor-icons/react";
 import { AssetsPage } from "./AssetsPage";
 import { ZhiShuMark } from "./BrandIcons";
 import { APP_COPY, RULEPACK_BY_ID } from "./copy";
@@ -58,7 +58,9 @@ export function App() {
     if (!desktop) return;
     let cancelled = false;
     const unsubscribe = desktop.onSoftwareUpdate((nextState) => {
-      if (!cancelled) setSoftwareState(nextState);
+      if (cancelled) return;
+      setSoftwareState(nextState);
+      if (nextState.phase !== "error") setSoftwareError("");
     });
     void desktop
       .getSoftwareUpdate()
@@ -105,6 +107,12 @@ export function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!softwareError) return;
+    const timer = window.setTimeout(() => setSoftwareError(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [softwareError]);
 
   function api(): DesktopApi {
     if (!window.zhishu) throw new Error("请在桌面应用中使用智枢");
@@ -479,7 +487,7 @@ export function App() {
         <div className="sidebar-footer">
           <div className="version-card">
             <div className="version-card-row">
-              <span className="version-tag">v{softwareState?.currentVersion ?? "2.1.2"}</span>
+              <span className="version-tag">v{softwareState?.currentVersion ?? "2.1.3"}</span>
               {softwareState?.phase === "ready" && (
                 <span className="badge badge--success">已就绪</span>
               )}
@@ -533,20 +541,18 @@ export function App() {
                 )}
               </div>
             )}
-            {(softwareError || (softwareState?.phase === "error" && softwareState.message)) && (
+            {softwareState?.phase === "error" && softwareState.availableVersion && (
               <div className="version-error-row">
-                <span className="version-error-text" title={softwareError || softwareState?.message}>
-                  {softwareError || softwareState?.message}
+                <span className="version-error-text" title={softwareState.message || softwareError}>
+                  {softwareState.message || softwareError || "下载失败"}
                 </span>
-                {softwareState?.availableVersion && (
-                  <button
-                    type="button"
-                    className="version-fallback-link"
-                    onClick={openBrowserSoftwareDownload}
-                  >
-                    浏览器下载
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="version-fallback-link"
+                  onClick={openBrowserSoftwareDownload}
+                >
+                  浏览器下载
+                </button>
               </div>
             )}
           </div>
@@ -647,7 +653,15 @@ export function App() {
 
       {softwareError && (
         <div className="software-toast" role="alert">
-          {softwareError}
+          <span className="software-toast-text">{softwareError}</span>
+          <button
+            type="button"
+            className="software-toast-close"
+            aria-label="关闭提示"
+            onClick={() => setSoftwareError("")}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
         </div>
       )}
     </div>

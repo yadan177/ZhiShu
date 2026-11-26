@@ -1,0 +1,6 @@
+interface:
+  display_name: "Unity 代码规范审查"
+  short_description: "用于按 Unity C# 工程规范审查脚本变更，重点排查每帧热路径 GC 分配、生命周期与事件…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

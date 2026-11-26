@@ -1,0 +1,6 @@
+interface:
+  display_name: "单元测试与验证脚本编写"
+  short_description: "用于为 Unity 项目编写结构清晰、可稳定重复运行的 EditMode / PlayMode…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

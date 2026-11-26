@@ -1,0 +1,6 @@
+interface:
+  display_name: "跨端空间 UI 开发实现"
+  short_description: "用于在非 Unity 工程中开发或审查空间 UI 与跨端伴随界面，包括 WebXR（Three…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

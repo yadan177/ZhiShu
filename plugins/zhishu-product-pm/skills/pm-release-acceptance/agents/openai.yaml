@@ -1,0 +1,6 @@
+interface:
+  display_name: "版本验收清单生成"
+  short_description: "用于根据 PRD、需求变更与版本目标生成结构化的版本验收清单、冒烟用例与发版准出评估表，涵盖功…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"

@@ -1,0 +1,6 @@
+interface:
+  display_name: "系统架构与时序图生成"
+  short_description: "用于基于真实全栈工程源码（JS/TS、Go、Java、Python、桌面端/Web）或技术设计…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

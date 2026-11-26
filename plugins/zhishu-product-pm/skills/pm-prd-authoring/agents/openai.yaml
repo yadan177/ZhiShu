@@ -1,0 +1,6 @@
+interface:
+  display_name: "PRD 需求文档编写"
+  short_description: "用于编写或重构可落地研发与设计的正式产品需求文档（PRD），包含背景目标、范围边界、角色权限、…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"

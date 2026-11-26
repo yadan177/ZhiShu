@@ -1,0 +1,6 @@
+interface:
+  display_name: "对话现场规则进化捕获"
+  short_description: "用于在 AI 对话开发、排障、架构或体验评审中，将经用户纠正的可复用工程规范、参数校准或自检步…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

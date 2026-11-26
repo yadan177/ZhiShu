@@ -69,6 +69,7 @@ export interface InstalledAssetRecord {
   kind: string;
   version: string;
   sourceKey: string;
+  sourceDigest?: string;
   destination: string;
   target: { ideId: AssetIde };
   issues: string[];

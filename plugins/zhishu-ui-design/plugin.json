@@ -7,9 +7,21 @@
     "name": "智枢官方"
   },
   "license": "Apache-2.0",
+  "logo": "assets/logo.svg",
   "skills": "./skills/",
   "interface": {
-    "displayName": "UI 设计师"
+    "displayName": "UI 设计师",
+    "shortDescription": "2D 与 XR 空间界面状态梳理、线框布局、设计系统与走查交付",
+    "developerName": "智枢官方",
+    "category": "Design",
+    "brandColor": "#E11D48",
+    "logo": "./assets/logo.svg",
+    "composerIcon": "./assets/logo.svg",
+    "defaultPrompt": [
+      "梳理当前页面的完整界面状态矩阵与核心交互流转",
+      "按项目定位搭建颜色、字阶、间距与核心组件的设计系统令牌",
+      "对照 XR 空间界面规范检查这套界面稿并输出研发走查与交付清单"
+    ]
   },
   "ruleCategories": [
     "common",

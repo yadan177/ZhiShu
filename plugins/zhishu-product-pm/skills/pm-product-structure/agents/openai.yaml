@@ -1,0 +1,6 @@
+interface:
+  display_name: "产品结构图生成"
+  short_description: "用于梳理和生成清晰的产品结构图、功能架构图、信息架构层级与页面模块树"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#059669"

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Unity XR 空间 UI 实现"
+  short_description: "用于在 Unity（OpenXR / XR Interaction Toolkit / PIC…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18181B"

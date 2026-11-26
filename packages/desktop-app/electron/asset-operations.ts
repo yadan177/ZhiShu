@@ -6,7 +6,13 @@ import {
   antigravityPluginRoot,
   antigravitySkillRoot,
 } from "../../../adapters/antigravity/user-assets.ts";
-import { CodexPluginHost, codexRunner, discoverCodexSkills, findCodexCli } from "../../../adapters/codex/user-assets.ts";
+import {
+  CodexPluginHost,
+  codexRunner,
+  discoverCodexSkills,
+  findCodexCli,
+  prepareCodexPluginFiles,
+} from "../../../adapters/codex/user-assets.ts";
 import { traeWorkDelivery, traeWorkSkillRoot } from "../../../adapters/traework/user-assets.ts";
 import {
   UserAssetStore,
@@ -423,16 +429,29 @@ export class AssetOperations {
             throw new Error("此插件已在 Codex 中停用，请在软件中处理后再更新");
           }
           destination = path.join(this.stateRoot, "codex", name);
+          const codexFiles = prepareCodexPluginFiles(sourceFiles);
+          sourceFiles = codexFiles;
+          let category = "Productivity";
+          try {
+            const parsed = JSON.parse(
+              (codexFiles.get(".codex-plugin/plugin.json") ?? codexFiles.get("plugin.json"))?.toString("utf8") ?? "{}",
+            );
+            if (isPlainObject(parsed) && isPlainObject(parsed.interface) && typeof parsed.interface.category === "string" && parsed.interface.category.trim()) {
+              category = parsed.interface.category.trim();
+            }
+          } catch {
+            // 回退默认分类
+          }
           const catalog = {
             name: `zhishu-${name}`,
             plugins: [{
               name,
               source: { source: "local", path: `./plugins/${name}` },
               policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
-              category: "Productivity",
+              category,
             }],
           };
-          files = new Map([...sourceFiles].map(([file, data]) => [`plugins/${name}/${file}`, data]));
+          files = new Map([...codexFiles].map(([file, data]) => [`plugins/${name}/${file}`, data]));
           files.set(".agents/plugins/marketplace.json", Buffer.from(`${JSON.stringify(catalog, null, 2)}\n`));
         }
         const id = `${kind === "skill" ? "skill" : "plugin"}-${name}`;

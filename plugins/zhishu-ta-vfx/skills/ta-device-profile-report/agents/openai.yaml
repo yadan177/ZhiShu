@@ -1,0 +1,6 @@
+interface:
+  display_name: "真机性能剖析与报告输出"
+  short_description: "用于整理与分析 Unity Profiler、Frame Debugger、RenderDoc…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#6D28D9"

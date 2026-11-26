@@ -1,0 +1,6 @@
+interface:
+  display_name: "技术文档与变更日志同步"
+  short_description: "用于在代码完成功能迭代、架构调整、接口变更或准备发版时，增量定位并同步受影响的技术文档（架构总…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#1D4ED8"

@@ -9,7 +9,7 @@ await Promise.all([
     format: "cjs",
     target: "node22",
     external: ["electron", "electron-updater", "tar", "yaml"],
-    loader: { ".md": "text", ".yaml": "text" },
+    loader: { ".md": "text", ".yaml": "text", ".svg": "text" },
   }),
   build({
     entryPoints: ["electron/preload.ts"],
@@ -46,6 +46,14 @@ await Promise.all([
     target: "node22",
   }),
   build({
+    entryPoints: ["electron/resilient-fetch.ts"],
+    outfile: "build/resilient-fetch.cjs",
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node22",
+  }),
+  build({
     entryPoints: ["electron/plugin-library.ts"],
     outfile: "build/plugin-library.cjs",
     bundle: true,
@@ -53,7 +61,7 @@ await Promise.all([
     format: "cjs",
     target: "node22",
     external: ["yaml"],
-    loader: { ".md": "text", ".yaml": "text" },
+    loader: { ".md": "text", ".yaml": "text", ".svg": "text" },
   }),
   build({
     entryPoints: ["electron/asset-operations.ts"],
@@ -63,7 +71,7 @@ await Promise.all([
     format: "cjs",
     target: "node22",
     external: ["yaml"],
-    loader: { ".md": "text", ".yaml": "text" },
+    loader: { ".md": "text", ".yaml": "text", ".svg": "text" },
   }),
   build({
     entryPoints: ["electron/project-registry.ts"],
@@ -90,7 +98,7 @@ await Promise.all([
     format: "cjs",
     target: "node22",
     external: ["tar", "yaml"],
-    loader: { ".md": "text", ".yaml": "text" },
+    loader: { ".md": "text", ".yaml": "text", ".svg": "text" },
   }),
   build({
     entryPoints: ["electron/source-manager.ts"],

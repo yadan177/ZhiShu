@@ -1,0 +1,6 @@
+interface:
+  display_name: "界面需求与状态梳理"
+  short_description: "用于将 PRD 或功能描述拆解为完整的页面清单、信息层级、控件交互状态与边界态矩阵（空态/加载…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#E11D48"

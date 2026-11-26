@@ -61,7 +61,10 @@ export class SoftwareUpdateService {
   private downloadAbort?: AbortController;
   private pendingCheck?: Promise<SoftwareUpdateState>;
 
-  constructor(private readonly notify: (state: SoftwareUpdateState) => void) {
+  constructor(
+    private readonly notify: (state: SoftwareUpdateState) => void,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.on("error", (error) => {
@@ -130,7 +133,7 @@ export class SoftwareUpdateService {
       if (!app.isPackaged) {
         return this.setState({ phase: "current", currentVersion: app.getVersion(), message: "开发模式不检查软件更新" });
       }
-      const release = await fetchDesktopRelease(process.platform, process.arch);
+      const release = await fetchDesktopRelease(process.platform, process.arch, this.fetcher);
       this.release = release;
       if (!release || compareDesktopVersions(release.version, app.getVersion()) <= 0) {
         return this.setState({ phase: "current", currentVersion: app.getVersion() });
@@ -251,6 +254,7 @@ export class SoftwareUpdateService {
       const result = await downloadVerifiedInstaller({
         release,
         cacheDir: this.cacheDir(),
+        fetcher: this.fetcher,
         signal: controller.signal,
         onProgress: (percent) => {
           if (this.state.phase === "downloading") {

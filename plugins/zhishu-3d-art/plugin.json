@@ -7,9 +7,21 @@
     "name": "智枢官方"
   },
   "license": "Apache-2.0",
+  "logo": "assets/logo.svg",
   "skills": "./skills/",
   "interface": {
-    "displayName": "三维设计师"
+    "displayName": "三维设计师",
+    "shortDescription": "XR 与实时 3D 模型重拓扑、贴图体检、导出校验与 Blender 批处理",
+    "developerName": "智枢官方",
+    "category": "Design",
+    "brandColor": "#0284C7",
+    "logo": "./assets/logo.svg",
+    "composerIcon": "./assets/logo.svg",
+    "defaultPrompt": [
+      "为这个道具整理适配图生 3D 的多视角参考图拍摄规范与提示词",
+      "按 XR 预算检查这份模型和 PBR 贴图的面数、LOD、UV 与通道打包",
+      "生成一个 Blender Python 批处理脚本完成轴向修正、清变换与 FBX 批量导出"
+    ]
   },
   "ruleCategories": [
     "common",

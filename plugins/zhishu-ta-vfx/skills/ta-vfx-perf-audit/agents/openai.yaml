@@ -1,0 +1,6 @@
+interface:
+  display_name: "特效性能体检"
+  short_description: "用于全面体检 Unity 粒子特效（Shuriken ParticleSystem / VFX…"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#6D28D9"
